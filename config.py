@@ -28,6 +28,8 @@ REVIEW_DIR = PROJECT_ROOT / "review"                         # everything a huma
 
 DATASET_DIR = PROJECT_ROOT / "dataset"                       # final train/val/test split
 
+SERVER_PORT = 8765                                           # local UI + inference server
+
 # ---------------------------------------------------------------------------
 # Inference
 # ---------------------------------------------------------------------------

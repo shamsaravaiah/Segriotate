@@ -1,0 +1,17 @@
+#!/bin/bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+cd "$ROOT"
+LOG="$ROOT/segriotate.log"
+
+if [ ! -x "$ROOT/venv/bin/python" ]; then
+  osascript -e 'display alert "Segriotate" message "Python venv not found. In Terminal run:\n\ncd '"$ROOT"'\npython3 -m venv venv\nsource venv/bin/activate\npip install -r requirements.txt" as critical'
+  exit 1
+fi
+
+if [ ! -f "$ROOT/models/segmentation.pt" ]; then
+  osascript -e 'display alert "Segriotate" message "Model not found. Put segmentation.pt in the models folder." as critical'
+  exit 1
+fi
+
+exec "$ROOT/venv/bin/python" "$ROOT/desktop_app.py" >>"$LOG" 2>&1

@@ -10,3 +10,7 @@ output/
 review/
 dataset/
 runs/
+dist/
+build/
+*.spec
+segriotate.log

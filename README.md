@@ -1,15 +1,25 @@
-# Fruit Grading — Auto-Labelling Pipeline
+# Fruit Grading — Segriotate
 
 Uses your trained YOLO segmentation model to pre-label images live as you
 grade them, with a FastSAM click-fallback for anything the model misses.
-Gets you a trainable dataset with far less manual annotation than
-labelling from scratch.
+
+## Desktop app (recommended)
+
+After setup (section 1 below), start Segriotate without opening a browser:
+
+```bash
+source venv/bin/activate
+python desktop_app.py
+```
+
+Or double-click **`Segriotate.app`** (macOS) in this folder. First launch can
+take a minute while models load. Put images in `images/` (they load
+automatically) or use **Open Images…**. Labels are written to `labels/`.
+
+Quit with Cmd+Q — that also stops the local server.
 
 ```
-open tools/label_editor.html + run scripts/segment_server.py
-     |
-     v
-switch to an image
+python desktop_app.py   (or double-click Segriotate.app)
      |
      v
 your model runs automatically (Auto-Detect)  -->  polygons pre-filled
@@ -24,7 +34,7 @@ your model runs automatically (Auto-Detect)  -->  polygons pre-filled
 assign grading class (1-9, 0)
      |
      v
-Save (S) -> writes YOLO .txt to your labels folder
+Save (S) -> writes YOLO .txt to labels/
      |
      v
 next image ...
@@ -79,27 +89,24 @@ python scripts/04_train.py
 
 ## 4. Reviewing / correcting labels
 
-### Live editor with on-demand model inference (recommended)
+### Desktop app (recommended)
 
-`tools/label_editor.html` + `scripts/segment_server.py` work together so you
-never have to run the batch script first: your model runs live, per image,
-the moment you open or switch to it in the editor.
+```bash
+python desktop_app.py
+```
 
-1. Start the server (leave this running in a terminal):
-   ```bash
-   python scripts/segment_server.py
-   ```
-   This loads your `segmentation.pt` for live detection, plus FastSAM as a
-   fallback for objects your model wasn't trained to recognize (e.g. a
-   different fruit variety). FastSAM's weights (~140MB) download once on
-   first run — after that, everything is fully offline.
+or double-click `Segriotate.app`. Images in `images/` load automatically.
+Saves go to `labels/`.
 
-2. Open `tools/label_editor.html` in **Chrome or Edge** (double-click it, or
-   drag it into the browser).
-3. Click **Open Images…**, pick your `images/` folder. Saves go automatically
-   to the project `labels/` folder (the server must be running). You do not
-   need **Open Labels…** unless you also want a second copy elsewhere.
-4. For each image:
+### Browser (optional)
+
+`python scripts/segment_server.py` then open http://127.0.0.1:8765
+(or `tools/label_editor.html` in Chrome against that server).
+
+1. Start the desktop app (or the server + browser). The first run loads your
+   `segmentation.pt` plus FastSAM. FastSAM weights (~140MB) download once.
+2. **Open Images…** if you are not using the project `images/` folder.
+3. For each image:
    - **Auto-Detect: ON** (default) — your model runs automatically and
      pre-fills every object it finds, as soon as the image loads.
    - Fix any pre-filled polygon: drag a vertex to move it, double-click an

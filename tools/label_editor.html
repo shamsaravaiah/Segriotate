@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Mask Editor — YOLO Segmentation Review</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<title>Segriotate</title>
+<script src="vendor/jszip.min.js"></script>
 <style>
   :root{
     --bg: #14161a;
@@ -161,7 +161,7 @@
 <div id="app">
   <header>
     <div class="dot"></div>
-    <h1>MASK EDITOR</h1>
+    <h1>SEGRIOTATE</h1>
     <div class="spacer"></div>
     <span class="filename" id="filenameLabel">no folder open</span>
     <span class="progress" id="progressLabel" title="Click the left number, type, and press Enter to jump">
@@ -183,7 +183,7 @@
         <button id="openLabelsBtn" title="Optional: also write a copy to another folder">Open Labels…</button>
       </div>
       <div style="font-size:11px; color:var(--text-faint); margin-bottom:8px; line-height:1.45;">
-        Saves go to the project <b style="color:var(--text-dim); font-weight:600">labels/</b> folder via the local server. Open Labels is an optional extra copy.
+        Saves go to the project <b style="color:var(--text-dim); font-weight:600">labels/</b> folder. Open Images uses a native folder dialog in the desktop app.
       </div>
       <div class="row">
         <button id="prevBtn" disabled>◀ Prev</button>
@@ -250,7 +250,7 @@
     <canvas id="canvas" width="800" height="600"></canvas>
     <div id="dropzone">
       <div class="big">No image loaded</div>
-      <p>Open an images folder from the left panel. Annotations are saved as YOLO .txt files into the project <code>labels/</code> folder automatically (the inference server must be running).</p>
+      <p>Click <b>Open Images…</b> to choose a folder. Nothing is loaded until you pick one. Labels are saved to <code>labels/</code>.</p>
     </div>
   </section>
 
@@ -335,7 +335,9 @@
     clickToSegment: true,
     autoDetect: true,
     autoSave: true,
-    segmentServerUrl: "http://127.0.0.1:8765",
+    segmentServerUrl: (location.protocol === "http:" || location.protocol === "https:")
+      ? ""
+      : "http://127.0.0.1:8765",
     imgBase64: null,              // cached data URL of current image, for segment requests
     segmenting: false,
   };
@@ -680,11 +682,43 @@
     }
   });
 
+  function isDesktopApp() {
+    return !!(window.pywebview && window.pywebview.api);
+  }
+
+  function applyServerFileList(files, dirLabel) {
+    state.files = (files || []).map(f => ({
+      name: f.name,
+      stem: f.stem,
+      url: (state.segmentServerUrl || "") + "/media/" + encodeURIComponent(f.name),
+    }));
+    state.index = state.files.length ? 0 : -1;
+    updateNavButtons();
+    if (state.files.length) {
+      dropzone.style.display = "none";
+      loadCurrentImageAndLabel();
+    } else {
+      dropzone.style.display = "";
+    }
+    const where = dirLabel ? ` from ${dirLabel}` : "";
+    setStatus(`${state.files.length} image(s) found${where} — saving .txt files to labels/`);
+  }
+
   // ---------------------------------------------------------------------
-  // Folder opening — File System Access API (preferred)
+  // Folder opening — desktop native dialog, else File System Access API
   // ---------------------------------------------------------------------
 
   $("openImagesBtn").addEventListener("click", async () => {
+    if (isDesktopApp()) {
+      try {
+        const data = await window.pywebview.api.pick_images_folder();
+        if (!data || !data.ok) return;
+        applyServerFileList(data.files, data.dir);
+      } catch (e) {
+        setStatus("could not open folder: " + (e.message || e));
+      }
+      return;
+    }
     if (state.supportsFS) {
       try {
         state.imagesDirHandle = await window.showDirectoryPicker();
@@ -1658,15 +1692,18 @@
   // ---------------------------------------------------------------------
 
   function init() {
-    if (!state.supportsFS) $("unsupported").style.display = "block";
+    if (!state.supportsFS && !isDesktopApp()) $("unsupported").style.display = "block";
     resizeCanvasToStage();
     if (!loadPersistedClasses()) resetToDefaultClasses();
     else renderClassList();
-    setSegmentStatus("click any unlabeled fruit to segment it, then pick a class");
+    setSegmentStatus("open a folder with Open Images…");
     draw();
     updateHeader();
   }
   init();
+  window.addEventListener("pywebviewready", () => {
+    $("unsupported").style.display = "none";
+  });
 
   window.addEventListener("beforeunload", (e) => {
     if (!state.dirty) return;
