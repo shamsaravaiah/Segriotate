@@ -1,0 +1,104 @@
+"""
+Central configuration for the auto-labelling pipeline.
+Edit the values below, then run the scripts in scripts/ in order:
+
+    01_test_model.py       -> sanity check your model on a handful of images
+    02_generate_labels.py  -> run the model over all images, split into
+                               auto-accepted vs needs-review, write YOLO .txt
+    03_split_dataset.py    -> build train/val/test folders from the
+                               auto-accepted labels
+    04_train.py             -> train (or fine-tune) a YOLO-seg model
+"""
+
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+
+MODEL_PATH = PROJECT_ROOT / "models" / "segmentation.pt"   # your existing YOLO-seg model
+IMAGE_DIR = PROJECT_ROOT / "images"                          # the 10,000 raw images
+LABEL_DIR = PROJECT_ROOT / "labels"                          # YOLO .txt annotations (editor writes here)
+
+OUTPUT_DIR = PROJECT_ROOT / "output"
+AUTO_LABEL_DIR = OUTPUT_DIR / "labels_auto"                  # high-confidence, ready to train on
+REVIEW_DIR = PROJECT_ROOT / "review"                         # everything a human should check in CVAT
+
+DATASET_DIR = PROJECT_ROOT / "dataset"                       # final train/val/test split
+
+# ---------------------------------------------------------------------------
+# Inference
+# ---------------------------------------------------------------------------
+
+# Minimum box confidence to even keep a detection at all.
+MIN_CONFIDENCE = 0.25
+
+# Per-instance confidence at/above which a detection is auto-accepted
+# without human review. Anything below this (but above MIN_CONFIDENCE)
+# is still written to the review set.
+AUTO_ACCEPT_CONFIDENCE = 0.70
+
+# If an image has more than this many detected instances, route the whole
+# image to review even if every instance was individually confident
+# (crowded scenes are the most error-prone for auto-masks).
+MAX_INSTANCES_BEFORE_REVIEW = 15
+
+# ---------------------------------------------------------------------------
+# Class handling
+# ---------------------------------------------------------------------------
+
+# Option A: collapse every detection into a single class (e.g. your existing
+# model is only being used as a generic "mask generator"). Set to an int to
+# use this, or None to disable.
+FORCE_CLASS_ID = None
+
+# Option B: remap the existing model's class ids to the ids your new
+# dataset should use. Leave empty ({}) to keep the original class ids.
+# Any class id NOT present in this map is dropped (its detections are
+# skipped entirely) -- add an identity entry (e.g. 4: 4) to keep a class
+# unchanged.
+CLASS_MAP = {}
+
+# Final class names for data.yaml, indexed by the NEW class id.
+#
+# These 10 fine-grained tiers group into 5 major categories for reference
+# (not merged yet -- collapse later via CLASS_MAP if/when needed):
+#   Export Quality     -> premium_export, super_fancy
+#   Premium Domestic   -> extra_fancy, fancy
+#   Standard Retail    -> choice, standard
+#   Commercial / Bulk  -> commercial, utility
+#   Non-Fresh           -> processing, reject
+CLASS_NAMES = {
+    0: "premium_export",
+    1: "super_fancy",
+    2: "extra_fancy",
+    3: "fancy",
+    4: "choice",
+    5: "standard",
+    6: "commercial",
+    7: "utility",
+    8: "processing",
+    9: "reject",
+}
+
+# ---------------------------------------------------------------------------
+# Dataset split
+# ---------------------------------------------------------------------------
+
+TRAIN_RATIO = 0.80
+VAL_RATIO = 0.10
+TEST_RATIO = 0.10
+SPLIT_SEED = 42
+
+# ---------------------------------------------------------------------------
+# Training
+# ---------------------------------------------------------------------------
+
+TRAIN_BASE_MODEL = "yolo11n-seg.pt"   # starting weights for training/fine-tuning
+TRAIN_EPOCHS = 100
+TRAIN_IMGSZ = 640
+TRAIN_BATCH = 16
+TRAIN_PROJECT = "runs"
+TRAIN_NAME = "my_segmentation"

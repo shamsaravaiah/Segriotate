@@ -1,0 +1,1645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mask Editor — YOLO Segmentation Review</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+  :root{
+    --bg: #14161a;
+    --panel: #1b1e25;
+    --panel-2: #20242c;
+    --border: #2a2e37;
+    --text: #e8e6e1;
+    --text-dim: #8b909c;
+    --text-faint: #565b66;
+    --accent: #5eead4;
+    --accent-dim: #2c4a46;
+    --danger: #f97362;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: var(--sans); overflow: hidden;
+  }
+  #app { display: grid; grid-template-columns: 260px 1fr 280px; grid-template-rows: 52px 1fr 28px; height: 100vh; }
+
+  header {
+    grid-column: 1 / -1; display: flex; align-items: center; gap: 14px;
+    padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.02em; margin: 0; color: var(--text); }
+  header .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  header .spacer { flex: 1; }
+  header .filename { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+  header .progress { font-family: var(--mono); font-size: 12px; color: var(--accent); display: inline-flex; align-items: center; gap: 2px; }
+  header .progress-input {
+    font-family: var(--mono); font-size: 12px; color: var(--accent);
+    background: transparent; border: 1px solid transparent; border-radius: 4px;
+    padding: 2px 4px; width: 3.6em; text-align: right; cursor: text;
+  }
+  header .progress-input:hover:not(:disabled) { background: var(--panel-2); border-color: var(--border); }
+  header .progress-input:focus { background: var(--panel-2); border-color: var(--accent); }
+  header .progress-input:disabled { opacity: 0.35; cursor: not-allowed; }
+  header .progress-sep { color: var(--accent); }
+
+  button {
+    font-family: var(--sans); font-size: 12px; font-weight: 600; letter-spacing: 0.01em;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 5px; padding: 7px 12px; cursor: pointer; transition: background .12s, border-color .12s;
+  }
+  button:hover { background: #262b34; border-color: #3a4049; }
+  button:active { background: #1a1d23; }
+  button.primary { background: var(--accent); color: #0a1210; border-color: var(--accent); }
+  button.primary:hover { background: #7ef0d9; }
+  button.danger { color: var(--danger); }
+  button:disabled { opacity: 0.35; cursor: not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  aside.left, aside.right {
+    background: var(--panel); overflow-y: auto; padding: 14px; border-right: 1px solid var(--border);
+  }
+  aside.right { border-right: none; border-left: 1px solid var(--border); }
+
+  section.stage {
+    position: relative; background: #0c0d10; overflow: hidden;
+    display: flex; align-items: center; justify-content: center;
+  }
+  canvas { display: block; cursor: crosshair; }
+
+  .section-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-faint);
+    margin: 0 0 10px 0; font-weight: 700;
+  }
+  .block { margin-bottom: 22px; }
+
+  .class-group-header {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-faint);
+    font-weight: 700; margin: 12px 0 4px 2px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .class-group-header:first-child { margin-top: 0; }
+  .class-row {
+    display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 5px;
+    cursor: pointer; border: 1px solid transparent; margin-bottom: 3px;
+  }
+  .class-row:hover { background: var(--panel-2); }
+  .class-row.active { background: var(--accent-dim); border-color: var(--accent); }
+  .class-row.on-mask { box-shadow: inset 2px 0 0 var(--accent); }
+  .class-swatch { width: 12px; height: 12px; border-radius: 3px; flex-shrink: 0; }
+  .class-key { font-family: var(--mono); font-size: 10px; color: var(--text-faint); width: 14px; }
+  .class-name { font-size: 12.5px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .class-chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px 0; }
+  .class-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px;
+    padding: 4px 6px 4px 8px; font-size: 12px;
+  }
+  .class-chip .chip-x {
+    border: none; background: transparent; color: var(--text-faint);
+    padding: 0 4px; font-size: 14px; line-height: 1; flex: 0;
+  }
+  .class-chip .chip-x:hover { color: var(--danger); }
+  .class-create {
+    margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);
+  }
+  .class-create .hint {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint);
+    font-weight: 700; margin: 0 0 6px 0;
+  }
+  .class-empty { font-size: 11px; color: var(--text-faint); padding: 4px 8px 8px; line-height: 1.4; }
+
+  input[type=text], input[type=number], select {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 5px; padding: 6px 8px; font-size: 12px; font-family: var(--sans); width: 100%;
+  }
+  select { cursor: pointer; }
+
+  .row { display: flex; gap: 6px; }
+  .row > * { flex: 1; }
+
+  .shortcut { display: flex; justify-content: space-between; font-size: 11.5px; padding: 3px 0; color: var(--text-dim); }
+  .shortcut kbd {
+    font-family: var(--mono); font-size: 10.5px; background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 3px; padding: 1px 5px; color: var(--text);
+  }
+
+  #dropzone {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; text-align: center; padding: 40px;
+  }
+  #dropzone p { color: var(--text-dim); font-size: 13px; max-width: 380px; line-height: 1.6; margin: 0; }
+  #dropzone .big { font-size: 15px; color: var(--text); font-weight: 600; }
+  #unsupported {
+    display: none; background: #2a1f1a; border: 1px solid #4a352a; color: #f3c19a; font-size: 11.5px;
+    padding: 8px 10px; border-radius: 5px; margin-bottom: 12px; line-height: 1.5;
+  }
+
+  footer {
+    grid-column: 1 / -1; background: var(--panel); border-top: 1px solid var(--border);
+    display: flex; align-items: center; padding: 0 14px; font-size: 11px; color: var(--text-faint);
+    font-family: var(--mono); gap: 18px;
+  }
+  #status { color: var(--accent); }
+
+  .polygon-item {
+    padding: 7px 8px; border-radius: 5px; border: 1px solid var(--border); margin-bottom: 6px;
+    background: var(--panel-2); cursor: pointer; font-size: 12px;
+  }
+  .polygon-item.selected { border-color: var(--accent); background: var(--accent-dim); }
+  .polygon-item .pi-top { display: flex; justify-content: space-between; align-items: center; }
+  .polygon-item .pi-verts { color: var(--text-faint); font-family: var(--mono); font-size: 10.5px; margin-top: 2px; }
+
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #2e333d; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="dot"></div>
+    <h1>MASK EDITOR</h1>
+    <div class="spacer"></div>
+    <span class="filename" id="filenameLabel">no folder open</span>
+    <span class="progress" id="progressLabel" title="Click the left number, type, and press Enter to jump">
+      <input type="text" inputmode="numeric" id="progressInput" class="progress-input" aria-label="Go to image number" disabled />
+      <span class="progress-sep">/</span>
+      <span id="progressTotal"></span>
+    </span>
+  </header>
+
+  <aside class="left">
+    <div id="unsupported">
+      Your browser doesn't support direct folder read/write (File System Access API). Use Chrome or Edge for full editing + saving. You can still load images via the fallback picker and export a ZIP of corrected labels.
+    </div>
+
+    <div class="block">
+      <div class="section-title">Project</div>
+      <div class="row" style="margin-bottom:6px;">
+        <button id="openImagesBtn">Open Images…</button>
+        <button id="openLabelsBtn" title="Optional: also write a copy to another folder">Open Labels…</button>
+      </div>
+      <div style="font-size:11px; color:var(--text-faint); margin-bottom:8px; line-height:1.45;">
+        Saves go to the project <b style="color:var(--text-dim); font-weight:600">labels/</b> folder via the local server. Open Labels is an optional extra copy.
+      </div>
+      <div class="row">
+        <button id="prevBtn" disabled>◀ Prev</button>
+        <button id="nextBtn" disabled>Next ▶</button>
+      </div>
+      <div class="row" style="margin-top:6px;">
+        <button id="saveBtn" class="primary" disabled>Save (S)</button>
+        <button id="exportZipBtn" disabled>Export ZIP</button>
+      </div>
+      <button id="autoSaveBtn" class="primary" style="width:100%; margin-top:6px;">Auto-Save: ON</button>
+      <button id="clickSegmentBtn" class="primary" style="width:100%; margin-top:6px;" disabled>Click-to-Segment: ON</button>
+      <button id="autoDetectBtn" class="primary" style="width:100%; margin-top:6px;" disabled>Auto-Detect: ON</button>
+      <div id="segmentStatus" style="font-size:11px; color:var(--text-faint); margin-top:6px; line-height:1.5;"></div>
+    </div>
+
+    <div class="block">
+      <div class="section-title">Classes</div>
+      <div id="classList"></div>
+
+      <div class="class-create">
+        <div class="hint">Class type (section)</div>
+        <div class="row">
+          <input type="text" id="newGroupInput" placeholder="e.g. Variety">
+          <button id="addGroupBtn">Add type</button>
+        </div>
+        <div class="hint" style="margin-top:10px;">Class under that type</div>
+        <select id="classGroupSelect" title="Type to add the class under"></select>
+        <div class="row" style="margin-top:6px;">
+          <input type="text" id="newClassInput" placeholder="class name">
+          <button id="addClassBtn">Add class</button>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:8px;">
+        <button id="clearClassesBtn" class="danger">Clear all</button>
+        <button id="resetClassesBtn">Reset defaults</button>
+      </div>
+      <div style="font-size:11px; color:var(--text-faint); margin-top:8px; line-height:1.45;">
+        Add as many types and classes as you need. Colors are assigned automatically and match the mask on the image. Custom stays as a type you can always add to.
+        Click a class to <b style="color:var(--text-dim); font-weight:600">replace</b> the selected mask’s class; Shift-click to <b style="color:var(--text-dim); font-weight:600">add</b> another class to it.
+      </div>
+    </div>
+
+    <div class="block">
+      <div class="section-title">Shortcuts</div>
+      <div class="shortcut"><span>Click fruit to segment</span><kbd>click</kbd></div>
+      <div class="shortcut"><span>New polygon</span><kbd>N</kbd></div>
+      <div class="shortcut"><span>Finish polygon</span><kbd>Enter</kbd></div>
+      <div class="shortcut"><span>Cancel / deselect</span><kbd>Esc</kbd></div>
+      <div class="shortcut"><span>Delete polygon</span><kbd>Del</kbd></div>
+      <div class="shortcut"><span>Replace class 1–10</span><kbd>1…9, 0</kbd></div>
+      <div class="shortcut"><span>Add extra class</span><kbd>Shift+1…9</kbd></div>
+      <div class="shortcut"><span>Insert vertex</span><kbd>dbl-click edge</kbd></div>
+      <div class="shortcut"><span>Delete vertex</span><kbd>right-click vertex</kbd></div>
+      <div class="shortcut"><span>Pan</span><kbd>space+drag</kbd></div>
+      <div class="shortcut"><span>Zoom</span><kbd>scroll</kbd></div>
+      <div class="shortcut"><span>Prev / next image</span><kbd>← →</kbd></div>
+      <div class="shortcut"><span>Save</span><kbd>S</kbd></div>
+      <div class="shortcut"><span>Undo</span><kbd>Ctrl+Z</kbd></div>
+    </div>
+  </aside>
+
+  <section class="stage" id="stage">
+    <canvas id="canvas" width="800" height="600"></canvas>
+    <div id="dropzone">
+      <div class="big">No image loaded</div>
+      <p>Open an images folder from the left panel. Annotations are saved as YOLO .txt files into the project <code>labels/</code> folder automatically (the inference server must be running).</p>
+    </div>
+  </section>
+
+  <aside class="right">
+    <div class="block">
+      <div class="section-title">Polygons on this image</div>
+      <div id="polygonList" style="font-size:12px; color:var(--text-faint);">none</div>
+    </div>
+    <div class="block">
+      <div class="section-title">Selected polygon</div>
+      <div id="selectedInfo" style="font-size:12px; color:var(--text-faint);">nothing selected</div>
+    </div>
+  </aside>
+
+  <footer>
+    <span id="status">ready</span>
+    <span id="reviewedCount"></span>
+    <span id="zoomLabel"></span>
+  </footer>
+</div>
+
+<input type="file" id="fallbackImagesInput" webkitdirectory multiple style="display:none">
+<input type="file" id="fallbackLabelsInput" webkitdirectory multiple style="display:none">
+
+<script>
+(() => {
+  "use strict";
+
+  // ---------------------------------------------------------------------
+  // Palette / state
+  // ---------------------------------------------------------------------
+
+  const PALETTE = ["#f97362","#5eead4","#a78bfa","#fbbf24","#60a5fa","#f472b6",
+                   "#34d399","#fb923c","#c084fc","#38bdf8","#fde047","#4ade80"];
+  const IMAGE_EXT = new Set(["jpg","jpeg","png","bmp","tif","tiff"]);
+  const VERTEX_HIT_R = 8;      // px, hit radius for grabbing a vertex
+  const EDGE_HIT_R = 6;        // px, hit radius for inserting a point on an edge
+  const CLASSES_STORAGE_KEY = "mask-editor-classes-v2";
+  const CLASSES_STORAGE_KEY_LEGACY = "mask-editor-classes-v1";
+  const AUTO_SAVE_MS = 500;
+
+  // Default fruit-grading taxonomy, grouped high -> low quality.
+  // Pre-loaded on start; users can still add their own classes below these.
+  const DEFAULT_GROUPS = [
+    { label: "Export Quality",    names: ["premium_export", "super_fancy"] },
+    { label: "Premium Domestic",  names: ["extra_fancy", "fancy"] },
+    { label: "Standard Retail",   names: ["choice", "standard"] },
+    { label: "Commercial / Bulk", names: ["commercial", "utility"] },
+    { label: "Non-Fresh",         names: ["processing", "reject"] },
+  ];
+
+  function buildDefaultClasses() {
+    const classes = [], groupForId = [];
+    DEFAULT_GROUPS.forEach(g => g.names.forEach(n => { classes.push(n); groupForId.push(g.label); }));
+    return { classes, groupForId };
+  }
+
+  const state = {
+    supportsFS: !!window.showDirectoryPicker,
+    imagesDirHandle: null,
+    labelsDirHandle: null,
+    files: [],                 // [{name, stem, handle?, url?, file?}]
+    index: -1,
+    classes: [],                // ["class_0", ...]
+    classGroup: [],              // parallel array: group label per class id
+    groupOrder: ["Custom"],      // section names; Custom always kept
+    activeClassId: 0,
+    img: null,                  // HTMLImageElement, currently loaded
+    imgW: 0, imgH: 0,
+    polygons: [],                // [{classId, points:[[x,y]...] normalized}]
+    selectedPoly: -1,
+    draft: null,                 // points array while drawing a new polygon
+    mode: "idle",                 // idle | draw | dragVertex | pan
+    dragVertexIdx: -1,
+    panStart: null,
+    zoom: 1, panX: 0, panY: 0,
+    spaceHeld: false,
+    reviewed: new Set(),
+    undoStack: [],
+    dirty: false,
+    labelsWritable: false,
+    fallbackLabelBlobs: {},      // stem -> text, used for zip export in fallback mode
+    clickToSegment: true,
+    autoDetect: true,
+    autoSave: true,
+    segmentServerUrl: "http://127.0.0.1:8765",
+    imgBase64: null,              // cached data URL of current image, for segment requests
+    segmenting: false,
+  };
+
+  // ---------------------------------------------------------------------
+  // DOM refs
+  // ---------------------------------------------------------------------
+
+  const $ = (id) => document.getElementById(id);
+  const canvas = $("canvas");
+  const ctx = canvas.getContext("2d");
+  const stage = $("stage");
+  const dropzone = $("dropzone");
+  const statusEl = $("status");
+  const filenameLabel = $("filenameLabel");
+  const progressInput = $("progressInput");
+  const progressTotal = $("progressTotal");
+  const reviewedCountEl = $("reviewedCount");
+  const zoomLabel = $("zoomLabel");
+  const classListEl = $("classList");
+  const polygonListEl = $("polygonList");
+  const selectedInfoEl = $("selectedInfo");
+
+  function setStatus(msg) { statusEl.textContent = msg; }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+
+  // ---------------------------------------------------------------------
+  // Classes
+  // ---------------------------------------------------------------------
+
+  function ensureClass(id) {
+    let added = false;
+    while (state.classes.length <= id) {
+      state.classes.push(`class_${state.classes.length}`);
+      state.classGroup.push("Custom");
+      added = true;
+    }
+    if (added) {
+      uniqueGroups();
+      persistClasses();
+      renderClassList();
+    }
+  }
+
+  function uniqueGroups() {
+    const seen = new Set();
+    const out = [];
+    (state.groupOrder || []).forEach(g => {
+      if (g && !seen.has(g)) { seen.add(g); out.push(g); }
+    });
+    state.classGroup.forEach(g => {
+      if (g && !seen.has(g)) { seen.add(g); out.push(g); }
+    });
+    if (!seen.has("Custom")) out.push("Custom");
+    state.groupOrder = out;
+    return out;
+  }
+
+  function applyTaxonomy(classes, groupForId, groupOrder) {
+    state.classes = classes;
+    state.classGroup = groupForId;
+    state.groupOrder = groupOrder && groupOrder.length ? groupOrder.slice() : ["Custom"];
+    uniqueGroups();
+    if (!state.classes.length) state.activeClassId = 0;
+    else if (state.activeClassId >= state.classes.length) state.activeClassId = 0;
+    persistClasses();
+    renderClassList();
+    renderSidePanels();
+    draw();
+  }
+
+  function resetToDefaultClasses() {
+    const { classes, groupForId } = buildDefaultClasses();
+    applyTaxonomy(classes, groupForId, DEFAULT_GROUPS.map(g => g.label).concat("Custom"));
+  }
+
+  function clearAllClasses() {
+    applyTaxonomy([], [], ["Custom"]);
+  }
+
+  function requireClass() {
+    if (state.classes.length) return true;
+    setStatus("add a class first (left panel)");
+    return false;
+  }
+
+  function getClassIds(poly) {
+    if (!poly) return [];
+    if (Array.isArray(poly.classIds) && poly.classIds.length) {
+      return [...new Set(poly.classIds.map(Number))];
+    }
+    if (poly.classId !== undefined && poly.classId !== null) return [Number(poly.classId)];
+    return [];
+  }
+
+  function applyClassIds(poly, ids) {
+    const unique = [...new Set(ids.map(Number))];
+    poly.classIds = unique.length ? unique : [0];
+    poly.classId = poly.classIds[0];
+  }
+
+  function makePoly(classIds, points) {
+    const poly = { points };
+    applyClassIds(poly, classIds);
+    return poly;
+  }
+
+  function classLabel(id) {
+    return state.classes[id] || `class_${id}`;
+  }
+
+  function selectedHasClass(id) {
+    if (state.selectedPoly < 0) return false;
+    return getClassIds(state.polygons[state.selectedPoly]).includes(id);
+  }
+
+  function classColor(id) { return PALETTE[id % PALETTE.length]; }
+
+  function keyLabelForId(id) {
+    if (id < 9) return String(id + 1);   // classes 0-8 -> keys 1-9
+    if (id === 9) return "0";             // class 9 -> key 0
+    return "";
+  }
+
+  function renderGroupSelect() {
+    const sel = $("classGroupSelect");
+    if (!sel) return;
+    const current = sel.value;
+    const groups = uniqueGroups();
+    sel.innerHTML = groups.map(g => `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
+    if (groups.includes(current)) sel.value = current;
+    else sel.value = groups.includes("Custom") ? "Custom" : groups[0];
+  }
+
+  function renderClassList() {
+    classListEl.innerHTML = "";
+    const groups = uniqueGroups();
+    if (!state.classes.length && groups.every(g => g === "Custom")) {
+      classListEl.innerHTML = `<div class="class-empty">No classes yet — add a type, then add classes under it. Color is assigned automatically.</div>`;
+    } else {
+      groups.forEach(group => {
+        const ids = [];
+        state.classes.forEach((_, id) => {
+          if ((state.classGroup[id] || "Custom") === group) ids.push(id);
+        });
+        const header = document.createElement("div");
+        header.className = "class-group-header";
+        header.innerHTML = `<span>${escapeHtml(group)}</span>`;
+        classListEl.appendChild(header);
+        if (!ids.length) {
+          const empty = document.createElement("div");
+          empty.className = "class-empty";
+          empty.textContent = "no classes in this type yet";
+          classListEl.appendChild(empty);
+          return;
+        }
+        ids.forEach(id => {
+          const row = document.createElement("div");
+          row.className = "class-row"
+            + (id === state.activeClassId ? " active" : "")
+            + (selectedHasClass(id) ? " on-mask" : "");
+          row.innerHTML = `
+            <span class="class-swatch" style="background:${classColor(id)}"></span>
+            <span class="class-key">${keyLabelForId(id)}</span>
+            <span class="class-name">${escapeHtml(state.classes[id])}</span>
+          `;
+          row.title = selectedHasClass(id)
+            ? "On this mask — click to keep only this class, Shift-click does nothing extra"
+            : "Click to assign (replace); Shift-click to add as another class";
+          row.addEventListener("click", (e) => {
+            if (e.shiftKey) addClassToSelected(id);
+            else setActiveClass(id);
+          });
+          classListEl.appendChild(row);
+        });
+      });
+    }
+    renderGroupSelect();
+  }
+
+  function persistClasses() {
+    try {
+      localStorage.setItem(CLASSES_STORAGE_KEY, JSON.stringify({
+        classes: state.classes,
+        classGroup: state.classGroup,
+        groupOrder: uniqueGroups(),
+      }));
+    } catch (e) { /* quota / private mode */ }
+  }
+
+  function loadPersistedClasses() {
+    try {
+      const raw = localStorage.getItem(CLASSES_STORAGE_KEY)
+        || localStorage.getItem(CLASSES_STORAGE_KEY_LEGACY);
+      if (!raw) return false;
+      const data = JSON.parse(raw);
+      if (!Array.isArray(data.classes)) return false;
+      state.classes = data.classes;
+      state.classGroup = data.classes.map((_, i) =>
+        (Array.isArray(data.classGroup) && data.classGroup[i]) || "Custom"
+      );
+      state.groupOrder = Array.isArray(data.groupOrder) && data.groupOrder.length
+        ? data.groupOrder
+        : [];
+      uniqueGroups();
+      if (state.classes.length && state.activeClassId >= state.classes.length) state.activeClassId = 0;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function setActiveClass(id) {
+    if (id < 0 || id >= state.classes.length) return;
+    state.activeClassId = id;
+    if (state.selectedPoly >= 0) {
+      const poly = state.polygons[state.selectedPoly];
+      const ids = getClassIds(poly);
+      const alreadyOnly = ids.length === 1 && ids[0] === id;
+      if (!alreadyOnly) {
+        pushUndo();
+        applyClassIds(poly, [id]);
+        markDirty();
+        setStatus(`class → ${classLabel(id)}`);
+      }
+    }
+    renderClassList();
+    renderSidePanels();
+    draw();
+  }
+
+  function addClassToSelected(id) {
+    if (id < 0 || id >= state.classes.length) return;
+    state.activeClassId = id;
+    if (state.selectedPoly < 0) {
+      renderClassList();
+      renderSidePanels();
+      setStatus(`active class ${classLabel(id)} — click a mask to add it, or click a fruit to segment`);
+      return;
+    }
+    const poly = state.polygons[state.selectedPoly];
+    const ids = getClassIds(poly);
+    if (ids.includes(id)) {
+      setStatus(`already tagged ${classLabel(id)}`);
+      renderClassList();
+      renderSidePanels();
+      return;
+    }
+    pushUndo();
+    applyClassIds(poly, ids.concat(id));
+    markDirty();
+    setStatus(`added class ${classLabel(id)} (now ${getClassIds(poly).map(classLabel).join(" + ")})`);
+    renderClassList();
+    renderSidePanels();
+    draw();
+  }
+
+  function removeClassFromSelected(id) {
+    if (state.selectedPoly < 0) return;
+    const poly = state.polygons[state.selectedPoly];
+    const ids = getClassIds(poly).filter(x => x !== id);
+    if (!ids.length) {
+      setStatus("keep at least one class, or press Del to delete the polygon");
+      return;
+    }
+    pushUndo();
+    applyClassIds(poly, ids);
+    markDirty();
+    setStatus(`removed ${classLabel(id)}`);
+    renderClassList();
+    renderSidePanels();
+    draw();
+  }
+
+  function addClassType() {
+    const input = $("newGroupInput");
+    const name = input.value.trim();
+    if (!name) return;
+    const groups = uniqueGroups();
+    const existing = groups.find(g => g.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      $("classGroupSelect").value = existing;
+      input.value = "";
+      setStatus(`type "${existing}" already exists — selected`);
+      return;
+    }
+    state.groupOrder = groups.filter(g => g !== "Custom").concat(name, "Custom");
+    persistClasses();
+    renderClassList();
+    $("classGroupSelect").value = name;
+    input.value = "";
+    setStatus(`added type "${name}" — now add classes under it`);
+  }
+
+  function addNamedClass() {
+    const input = $("newClassInput");
+    const name = input.value.trim();
+    if (!name) return;
+    const existing = state.classes.findIndex(c => c.toLowerCase() === name.toLowerCase());
+    if (existing >= 0) {
+      if (state.selectedPoly >= 0) addClassToSelected(existing);
+      else setActiveClass(existing);
+      input.value = "";
+      setStatus(`class "${state.classes[existing]}" already exists — selected`);
+      return;
+    }
+    let group = ($("classGroupSelect").value || "Custom").trim() || "Custom";
+    const groups = uniqueGroups();
+    const match = groups.find(g => g.toLowerCase() === group.toLowerCase());
+    group = match || group;
+    if (!groups.includes(group)) {
+      state.groupOrder = groups.filter(g => g !== "Custom").concat(group, "Custom");
+    }
+    state.classes.push(name);
+    state.classGroup.push(group);
+    persistClasses();
+    input.value = "";
+    const newId = state.classes.length - 1;
+    if (state.selectedPoly >= 0) addClassToSelected(newId);
+    else setActiveClass(newId);
+    setStatus(`added "${name}" in ${group}`);
+  }
+
+  $("addGroupBtn").addEventListener("click", addClassType);
+  $("addClassBtn").addEventListener("click", addNamedClass);
+  $("newGroupInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); addClassType(); }
+  });
+  $("newClassInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); addNamedClass(); }
+  });
+  $("clearClassesBtn").addEventListener("click", () => {
+    if (!confirm("Clear all class types and classes? Existing masks keep their numeric class ids until you reassign them.")) return;
+    clearAllClasses();
+    setStatus("classes cleared — add types and classes on the left");
+  });
+  $("resetClassesBtn").addEventListener("click", () => {
+    if (confirm("Reset class list to the 10 default grading classes? Custom types and classes you added will be removed from this list (polygons already using them keep their class id).")) {
+      resetToDefaultClasses();
+      setStatus("restored 10 default grading classes");
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // Folder opening — File System Access API (preferred)
+  // ---------------------------------------------------------------------
+
+  $("openImagesBtn").addEventListener("click", async () => {
+    if (state.supportsFS) {
+      try {
+        state.imagesDirHandle = await window.showDirectoryPicker();
+        await loadFileListFromFS();
+      } catch (e) { /* user cancelled */ }
+    } else {
+      $("fallbackImagesInput").click();
+    }
+  });
+
+  $("openLabelsBtn").addEventListener("click", async () => {
+    if (state.supportsFS) {
+      try {
+        state.labelsDirHandle = await window.showDirectoryPicker({ mode: "readwrite" });
+        state.labelsWritable = true;
+        setStatus("extra labels folder connected — also saving to project labels/");
+        if (state.index >= 0) await loadCurrentLabel();
+      } catch (e) { /* cancelled */ }
+    } else {
+      $("fallbackLabelsInput").click();
+    }
+  });
+
+  async function loadFileListFromFS() {
+    const files = [];
+    for await (const [name, handle] of state.imagesDirHandle.entries()) {
+      if (handle.kind !== "file") continue;
+      const ext = name.split(".").pop().toLowerCase();
+      if (!IMAGE_EXT.has(ext)) continue;
+      files.push({ name, stem: name.replace(/\.[^.]+$/, ""), handle });
+    }
+    files.sort((a, b) => a.name.localeCompare(b.name));
+    state.files = files;
+    state.index = files.length ? 0 : -1;
+    updateNavButtons();
+    if (files.length) {
+      dropzone.style.display = "none";
+      await loadCurrentImageAndLabel();
+    }
+    setStatus(`${files.length} image(s) found — saving .txt files to labels/`);
+  }
+
+  // Fallback: <input webkitdirectory> for browsers without File System Access API
+  $("fallbackImagesInput").addEventListener("change", (e) => {
+    const fl = Array.from(e.target.files).filter(f => {
+      const ext = f.name.split(".").pop().toLowerCase();
+      return IMAGE_EXT.has(ext);
+    });
+    fl.sort((a, b) => a.name.localeCompare(b.name));
+    state.files = fl.map(f => ({ name: f.name, stem: f.name.replace(/\.[^.]+$/, ""), file: f, url: URL.createObjectURL(f) }));
+    state.index = state.files.length ? 0 : -1;
+    updateNavButtons();
+    if (state.files.length) {
+      dropzone.style.display = "none";
+      loadCurrentImageAndLabel();
+    }
+    setStatus(`${state.files.length} image(s) loaded — saving .txt files to project labels/`);
+  });
+
+  $("fallbackLabelsInput").addEventListener("change", async (e) => {
+    const fl = Array.from(e.target.files).filter(f => f.name.endsWith(".txt"));
+    for (const f of fl) {
+      const text = await f.text();
+      state.fallbackLabelBlobs[f.name.replace(/\.txt$/, "")] = text;
+    }
+    setStatus(`${fl.length} label file(s) loaded`);
+    if (state.index >= 0) await loadCurrentLabel();
+  });
+
+  // ---------------------------------------------------------------------
+  // Loading current image + label
+  // ---------------------------------------------------------------------
+
+  async function loadCurrentImageAndLabel() {
+    await loadCurrentImage();
+    await loadCurrentLabel();
+    resetView();
+    draw();
+    updateHeader();
+    renderSidePanels();
+  }
+
+  async function loadCurrentImage() {
+    const f = state.files[state.index];
+    let url;
+    if (f.handle) {
+      const file = await f.handle.getFile();
+      url = URL.createObjectURL(file);
+    } else {
+      url = f.url;
+    }
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve; img.onerror = reject; img.src = url;
+    });
+    state.img = img;
+    state.imgW = img.naturalWidth;
+    state.imgH = img.naturalHeight;
+    state.imgBase64 = null; // lazily computed on first segment request for this image
+  }
+
+  function parseYoloSeg(text) {
+    const byKey = new Map();
+    const order = [];
+    text.split("\n").map(l => l.trim()).filter(Boolean).forEach(line => {
+      const parts = line.split(/\s+/).map(Number);
+      if (parts.length < 7) return; // classId + at least 3 points
+      const classId = parts[0];
+      const pts = [];
+      for (let i = 1; i < parts.length - 1; i += 2) {
+        pts.push([parts[i], parts[i + 1]]);
+      }
+      ensureClass(classId);
+      const key = pts.map(([x, y]) => `${Number(x).toFixed(5)},${Number(y).toFixed(5)}`).join("|");
+      if (byKey.has(key)) {
+        const poly = byKey.get(key);
+        applyClassIds(poly, getClassIds(poly).concat(classId));
+      } else {
+        const poly = makePoly([classId], pts);
+        byKey.set(key, poly);
+        order.push(poly);
+      }
+    });
+    return order;
+  }
+
+  async function loadCurrentLabel() {
+    clearTimeout(autoSaveTimer);
+    const f = state.files[state.index];
+    state.polygons = [];
+    state.selectedPoly = -1;
+    state.undoStack = [];
+    state.dirty = false;
+
+    let text = null;
+    try {
+      const res = await fetch(state.segmentServerUrl + "/label?" + new URLSearchParams({ stem: f.stem }));
+      if (res.ok) {
+        const data = await res.json();
+        if (data.text != null) text = data.text;
+      }
+    } catch (e) { /* server unreachable — fall through */ }
+    if (text == null && state.labelsDirHandle) {
+      try {
+        const fh = await state.labelsDirHandle.getFileHandle(`${f.stem}.txt`);
+        const file = await fh.getFile();
+        text = await file.text();
+      } catch (e) { /* no label yet */ }
+    }
+    if (text == null && state.fallbackLabelBlobs[f.stem] !== undefined) {
+      text = state.fallbackLabelBlobs[f.stem];
+    }
+    if (text != null) {
+      state.polygons = parseYoloSeg(text);
+    } else if (state.autoDetect) {
+      await autoDetectCurrentImage();
+    }
+    renderClassList();
+  }
+
+  async function autoDetectCurrentImage() {
+    setSegmentStatus("auto-detecting…");
+    try {
+      const res = await fetch(state.segmentServerUrl + "/detect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: getImageBase64() }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setSegmentStatus(`detect server error: ${err.error || res.status}`);
+        return;
+      }
+      const data = await res.json();
+      state.polygons = (data.objects || []).map(o => makePoly(
+        [o.classId],
+        o.points.map(([x, y]) => [clamp01(x), clamp01(y)]),
+      ));
+      if (state.polygons.length > 0) markDirty();
+      setSegmentStatus(state.polygons.length
+        ? `${state.polygons.length} object(s) auto-detected`
+        : "no objects detected — draw manually or use click-to-segment");
+    } catch (e) {
+      setSegmentStatus("detect server unreachable — run: python scripts/segment_server.py");
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Coordinate transforms
+  // ---------------------------------------------------------------------
+
+  function baseFitScale() {
+    if (!state.imgW) return 1;
+    return Math.min(canvas.width / state.imgW, canvas.height / state.imgH);
+  }
+  function currentScale() { return baseFitScale() * state.zoom; }
+  function originXY() {
+    const s = currentScale();
+    const dispW = state.imgW * s, dispH = state.imgH * s;
+    return {
+      x: (canvas.width - dispW) / 2 + state.panX,
+      y: (canvas.height - dispH) / 2 + state.panY,
+    };
+  }
+  function imgToCanvas(nx, ny) {
+    const s = currentScale();
+    const { x: ox, y: oy } = originXY();
+    return [ox + nx * state.imgW * s, oy + ny * state.imgH * s];
+  }
+  function canvasToImg(px, py) {
+    const s = currentScale();
+    const { x: ox, y: oy } = originXY();
+    return [(px - ox) / (state.imgW * s), (py - oy) / (state.imgH * s)];
+  }
+  function mousePos(e) {
+    const r = canvas.getBoundingClientRect();
+    return [ (e.clientX - r.left) * (canvas.width / r.width),
+             (e.clientY - r.top) * (canvas.height / r.height) ];
+  }
+
+  function resetView() { state.zoom = 1; state.panX = 0; state.panY = 0; }
+
+  // ---------------------------------------------------------------------
+  // Rendering
+  // ---------------------------------------------------------------------
+
+  function resizeCanvasToStage() {
+    const r = stage.getBoundingClientRect();
+    canvas.width = Math.max(200, Math.floor(r.width));
+    canvas.height = Math.max(200, Math.floor(r.height));
+  }
+  window.addEventListener("resize", () => { resizeCanvasToStage(); draw(); });
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (!state.img) return;
+
+    const s = currentScale();
+    const { x: ox, y: oy } = originXY();
+    ctx.drawImage(state.img, ox, oy, state.imgW * s, state.imgH * s);
+
+    state.polygons.forEach((poly, idx) => drawPolygon(poly, idx === state.selectedPoly));
+
+    if (state.mode === "draw" && state.draft) {
+      drawDraft();
+    }
+
+    zoomLabel.textContent = `zoom ${(state.zoom * 100).toFixed(0)}%`;
+  }
+
+  function drawPolygon(poly, selected) {
+    if (poly.points.length < 2) return;
+    const ids = getClassIds(poly);
+    const color = classColor(ids[0] ?? 0);
+    ctx.beginPath();
+    poly.points.forEach(([nx, ny], i) => {
+      const [x, y] = imgToCanvas(nx, ny);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = color + (selected ? "44" : "22");
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = selected ? 2.5 : 1.5;
+    ctx.stroke();
+    ids.slice(1).forEach((cid, i) => {
+      ctx.strokeStyle = classColor(cid);
+      ctx.lineWidth = selected ? 2 : 1.25;
+      ctx.setLineDash([5, 4]);
+      ctx.lineDashOffset = i * 4;
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.lineDashOffset = 0;
+    });
+
+    poly.points.forEach(([nx, ny]) => {
+      const [x, y] = imgToCanvas(nx, ny);
+      ctx.beginPath();
+      ctx.arc(x, y, selected ? 4.5 : 3, 0, Math.PI * 2);
+      ctx.fillStyle = selected ? "#ffffff" : color;
+      ctx.fill();
+      if (selected) { ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke(); }
+    });
+
+    if (poly.points.length) {
+      const [x, y] = imgToCanvas(poly.points[0][0], poly.points[0][1]);
+      ctx.font = "11px ui-monospace, monospace";
+      ids.forEach((cid, i) => {
+        ctx.fillStyle = classColor(cid);
+        ctx.fillText(classLabel(cid), x + 6, y - 6 - i * 13);
+      });
+    }
+  }
+
+  function drawDraft() {
+    const color = classColor(state.activeClassId);
+    ctx.beginPath();
+    state.draft.forEach(([nx, ny], i) => {
+      const [x, y] = imgToCanvas(nx, ny);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    if (state.draftCursor) {
+      const [x, y] = imgToCanvas(state.draftCursor[0], state.draftCursor[1]);
+      ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([4, 3]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    state.draft.forEach(([nx, ny]) => {
+      const [x, y] = imgToCanvas(nx, ny);
+      ctx.beginPath(); ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = color; ctx.fill();
+    });
+  }
+
+  // ---------------------------------------------------------------------
+  // Hit testing
+  // ---------------------------------------------------------------------
+
+  function findVertexAt(px, py) {
+    for (let pi = state.polygons.length - 1; pi >= 0; pi--) {
+      const poly = state.polygons[pi];
+      for (let vi = 0; vi < poly.points.length; vi++) {
+        const [x, y] = imgToCanvas(poly.points[vi][0], poly.points[vi][1]);
+        if (Math.hypot(x - px, y - py) <= VERTEX_HIT_R) return { pi, vi };
+      }
+    }
+    return null;
+  }
+
+  function findEdgeAt(px, py) {
+    for (let pi = state.polygons.length - 1; pi >= 0; pi--) {
+      const poly = state.polygons[pi];
+      const n = poly.points.length;
+      for (let vi = 0; vi < n; vi++) {
+        const [x1, y1] = imgToCanvas(...poly.points[vi]);
+        const [x2, y2] = imgToCanvas(...poly.points[(vi + 1) % n]);
+        const d = pointToSegmentDist(px, py, x1, y1, x2, y2);
+        if (d <= EDGE_HIT_R) return { pi, afterVi: vi };
+      }
+    }
+    return null;
+  }
+
+  function pointToSegmentDist(px, py, x1, y1, x2, y2) {
+    const dx = x2 - x1, dy = y2 - y1;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 ? ((px - x1) * dx + (py - y1) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const cx = x1 + t * dx, cy = y1 + t * dy;
+    return Math.hypot(px - cx, py - cy);
+  }
+
+  function pointInPolygon(px, py, poly) {
+    const pts = poly.points.map(([nx, ny]) => imgToCanvas(nx, ny));
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i], [xj, yj] = pts[j];
+      const intersect = ((yi > py) !== (yj > py)) &&
+        (px < (xj - xi) * (py - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  function findPolygonAt(px, py) {
+    for (let pi = state.polygons.length - 1; pi >= 0; pi--) {
+      if (pointInPolygon(px, py, state.polygons[pi])) return pi;
+    }
+    return -1;
+  }
+
+  // ---------------------------------------------------------------------
+  // Click-to-segment (FastSAM via local server)
+  // ---------------------------------------------------------------------
+
+  function getImageBase64() {
+    if (state.imgBase64) return state.imgBase64;
+    const off = document.createElement("canvas");
+    off.width = state.imgW; off.height = state.imgH;
+    off.getContext("2d").drawImage(state.img, 0, 0, state.imgW, state.imgH);
+    state.imgBase64 = off.toDataURL("image/jpeg", 0.9);
+    return state.imgBase64;
+  }
+
+  async function segmentAtClick(nx, ny) {
+    if (!requireClass()) return;
+    if (state.segmenting) return;
+    state.segmenting = true;
+    setSegmentStatus("segmenting…");
+    try {
+      const res = await fetch(state.segmentServerUrl + "/segment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ image: getImageBase64(), x: nx, y: ny }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        setSegmentStatus(`server error: ${err.error || res.status}`);
+        return;
+      }
+      const data = await res.json();
+      if (!data.points || data.points.length < 3) {
+        setSegmentStatus("no object found at that point");
+        return;
+      }
+      if (!requireClass()) return;
+      pushUndo();
+      state.polygons.push(makePoly(
+        [state.activeClassId],
+        data.points.map(([x, y]) => [clamp01(x), clamp01(y)]),
+      ));
+      state.selectedPoly = state.polygons.length - 1;
+      markDirty();
+      draw(); renderSidePanels();
+      setSegmentStatus(`polygon added ✓ — class ${classLabel(state.activeClassId)}. Click another class to replace, or Shift-click to add a second class.`);
+    } catch (e) {
+      setSegmentStatus("server unreachable — run: python scripts/segment_server.py");
+    } finally {
+      state.segmenting = false;
+    }
+  }
+
+  function setSegmentStatus(msg) { $("segmentStatus").textContent = msg; }
+
+  $("clickSegmentBtn").addEventListener("click", () => {
+    state.clickToSegment = !state.clickToSegment;
+    $("clickSegmentBtn").textContent = `Click-to-Segment: ${state.clickToSegment ? "ON" : "OFF"}`;
+    $("clickSegmentBtn").classList.toggle("primary", state.clickToSegment);
+    setSegmentStatus(state.clickToSegment
+      ? "click any unlabeled fruit to segment it, then pick a class"
+      : "");
+  });
+
+  $("autoDetectBtn").addEventListener("click", () => {
+    state.autoDetect = !state.autoDetect;
+    $("autoDetectBtn").textContent = `Auto-Detect: ${state.autoDetect ? "ON" : "OFF"}`;
+    $("autoDetectBtn").classList.toggle("primary", state.autoDetect);
+  });
+
+  // ---------------------------------------------------------------------
+  // Undo
+  // ---------------------------------------------------------------------
+
+  function pushUndo() {
+    const snap = JSON.parse(JSON.stringify(state.polygons));
+    state.undoStack.push(snap);
+    if (state.undoStack.length > 50) state.undoStack.shift();
+  }
+  function undo() {
+    if (!state.undoStack.length) { setStatus("nothing to undo"); return; }
+    state.polygons = state.undoStack.pop();
+    state.selectedPoly = -1;
+    markDirty();
+    draw(); renderSidePanels();
+    setStatus("undone");
+  }
+
+  // ---------------------------------------------------------------------
+  // Mouse interaction
+  // ---------------------------------------------------------------------
+
+  canvas.addEventListener("mousedown", (e) => {
+    if (!state.img) return;
+    const [px, py] = mousePos(e);
+
+    if (state.spaceHeld) {
+      state.mode = "pan";
+      state.panStart = { px, py, panX: state.panX, panY: state.panY };
+      return;
+    }
+
+    if (state.mode === "draw") {
+      const [nx, ny] = canvasToImg(px, py);
+      state.draft.push([clamp01(nx), clamp01(ny)]);
+      draw();
+      return;
+    }
+
+    const hitV = findVertexAt(px, py);
+    if (hitV) {
+      pushUndo();
+      state.selectedPoly = hitV.pi;
+      state.mode = "dragVertex";
+      state.dragVertexIdx = hitV.vi;
+      renderSidePanels();
+      return;
+    }
+
+    const pi = findPolygonAt(px, py);
+    if (pi === -1 && state.clickToSegment) {
+      const [nx, ny] = canvasToImg(px, py);
+      segmentAtClick(clamp01(nx), clamp01(ny));
+      return;
+    }
+    state.selectedPoly = pi;
+    draw(); renderSidePanels();
+  });
+
+  canvas.addEventListener("mousemove", (e) => {
+    if (!state.img) return;
+    const [px, py] = mousePos(e);
+
+    if (state.mode === "pan" && state.panStart) {
+      state.panX = state.panStart.panX + (px - state.panStart.px);
+      state.panY = state.panStart.panY + (py - state.panStart.py);
+      draw();
+      return;
+    }
+    if (state.mode === "dragVertex" && state.selectedPoly >= 0) {
+      const [nx, ny] = canvasToImg(px, py);
+      state.polygons[state.selectedPoly].points[state.dragVertexIdx] = [clamp01(nx), clamp01(ny)];
+      state.dirty = true;
+      updateSaveUi();
+      draw();
+      return;
+    }
+    if (state.mode === "draw" && state.draft) {
+      state.draftCursor = canvasToImg(px, py).map(clamp01);
+      draw();
+    }
+  });
+
+  window.addEventListener("mouseup", () => {
+    const wasDrag = state.mode === "dragVertex";
+    if (state.mode === "dragVertex" || state.mode === "pan") {
+      state.mode = "idle";
+    }
+    if (state.mode !== "draw") state.mode = "idle";
+    if (wasDrag && state.dirty) scheduleAutoSave();
+  });
+
+  canvas.addEventListener("dblclick", (e) => {
+    if (!state.img) return;
+    const [px, py] = mousePos(e);
+
+    if (state.mode === "draw") { finishDraft(); return; }
+
+    const hitE = findEdgeAt(px, py);
+    if (hitE) {
+      pushUndo();
+      const [nx, ny] = canvasToImg(px, py);
+      state.polygons[hitE.pi].points.splice(hitE.afterVi + 1, 0, [clamp01(nx), clamp01(ny)]);
+      state.selectedPoly = hitE.pi;
+      markDirty();
+      draw(); renderSidePanels();
+      setStatus("vertex inserted");
+    }
+  });
+
+  canvas.addEventListener("contextmenu", (e) => {
+    e.preventDefault();
+    if (!state.img) return;
+    const [px, py] = mousePos(e);
+    const hitV = findVertexAt(px, py);
+    if (hitV) {
+      const poly = state.polygons[hitV.pi];
+      if (poly.points.length <= 3) { setStatus("polygon needs at least 3 points"); return; }
+      pushUndo();
+      poly.points.splice(hitV.vi, 1);
+      markDirty();
+      draw(); renderSidePanels();
+      setStatus("vertex deleted");
+    }
+  });
+
+  canvas.addEventListener("wheel", (e) => {
+    if (!state.img) return;
+    e.preventDefault();
+    const [px, py] = mousePos(e);
+    const [nx, ny] = canvasToImg(px, py);
+    const factor = e.deltaY < 0 ? 1.1 : 0.9;
+    state.zoom = Math.min(8, Math.max(0.2, state.zoom * factor));
+    const [px2, py2] = imgToCanvas(nx, ny);
+    state.panX += px - px2;
+    state.panY += py - py2;
+    draw();
+  }, { passive: false });
+
+  function clamp01(v) { return Math.min(1, Math.max(0, v)); }
+
+  function finishDraft() {
+    if (state.draft && state.draft.length >= 3) {
+      if (!requireClass()) {
+        state.mode = "idle";
+        state.draft = null;
+        state.draftCursor = null;
+        draw(); renderSidePanels();
+        return;
+      }
+      pushUndo();
+      state.polygons.push(makePoly([state.activeClassId], state.draft));
+      state.selectedPoly = state.polygons.length - 1;
+      markDirty();
+      setStatus("polygon added");
+    } else {
+      setStatus("need at least 3 points — cancelled");
+    }
+    state.mode = "idle";
+    state.draft = null;
+    state.draftCursor = null;
+    draw(); renderSidePanels();
+  }
+
+  // ---------------------------------------------------------------------
+  // Keyboard
+  // ---------------------------------------------------------------------
+
+  window.addEventListener("keydown", (e) => {
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "select" || tag === "textarea") {
+      if (e.key === "Escape") e.target.blur();
+      return;
+    }
+
+    if (e.code === "Space") { state.spaceHeld = true; e.preventDefault(); return; }
+
+    if (e.ctrlKey || e.metaKey) {
+      if (e.key.toLowerCase() === "z") { e.preventDefault(); undo(); }
+      return;
+    }
+
+    if (/^Digit[0-9]$/.test(e.code)) {
+      const id = e.code === "Digit0" ? 9 : parseInt(e.code.slice(5), 10) - 1;
+      if (id < state.classes.length) {
+        e.preventDefault();
+        if (e.shiftKey) addClassToSelected(id);
+        else setActiveClass(id);
+      }
+      return;
+    }
+
+    switch (e.key) {
+      case "n": case "N":
+        if (!requireClass()) break;
+        state.mode = "draw"; state.draft = []; state.draftCursor = null; state.selectedPoly = -1;
+        setStatus("drawing new polygon — click to add points, Enter to finish, Esc to cancel");
+        draw(); renderSidePanels();
+        break;
+      case "Enter":
+        if (state.mode === "draw") finishDraft();
+        break;
+      case "Escape":
+        if (state.mode === "draw") { state.mode = "idle"; state.draft = null; draw(); setStatus("cancelled"); }
+        else { state.selectedPoly = -1; draw(); renderSidePanels(); }
+        break;
+      case "Delete": case "Backspace":
+        if (state.selectedPoly >= 0) {
+          pushUndo();
+          state.polygons.splice(state.selectedPoly, 1);
+          state.selectedPoly = -1;
+          markDirty();
+          draw(); renderSidePanels();
+          setStatus("polygon deleted");
+        }
+        break;
+      case "ArrowLeft": e.preventDefault(); navigate(-1); break;
+      case "ArrowRight": e.preventDefault(); navigate(1); break;
+      case "s": case "S": saveCurrentLabel(); break;
+    }
+  });
+  window.addEventListener("keyup", (e) => { if (e.code === "Space") state.spaceHeld = false; });
+
+  // ---------------------------------------------------------------------
+  // Save / navigate
+  // ---------------------------------------------------------------------
+
+  function polygonsToYolo() {
+    return state.polygons.flatMap(p => {
+      const coords = p.points.map(([x, y]) => `${x.toFixed(6)} ${y.toFixed(6)}`).join(" ");
+      return getClassIds(p).map(id => `${id} ${coords}`);
+    }).join("\n");
+  }
+
+  let autoSaveTimer = null;
+  let saving = false;
+
+  function updateSaveUi() {
+    const btn = $("saveBtn");
+    if (!btn) return;
+    btn.textContent = state.dirty ? "Save (S) *" : "Save (S)";
+  }
+
+  function markDirty() {
+    state.dirty = true;
+    updateSaveUi();
+    scheduleAutoSave();
+  }
+
+  function scheduleAutoSave() {
+    if (!state.autoSave) return;
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(() => {
+      if (state.dirty) saveCurrentLabel({ auto: true });
+    }, AUTO_SAVE_MS);
+  }
+
+  async function saveCurrentLabel(opts) {
+    const auto = !!(opts && opts.auto);
+    if (state.index < 0) return;
+    if (saving) return;
+    if (auto && !state.dirty) return;
+    saving = true;
+    clearTimeout(autoSaveTimer);
+    const f = state.files[state.index];
+    const text = polygonsToYolo();
+    state.fallbackLabelBlobs[f.stem] = text;
+
+    try {
+      const res = await fetch(state.segmentServerUrl + "/label", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stem: f.stem, text }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+    } catch (e) {
+      setStatus(`save to labels/ failed: ${e.message} — is the server running?`);
+      saving = false;
+      return;
+    }
+
+    if (state.labelsDirHandle) {
+      try {
+        const fh = await state.labelsDirHandle.getFileHandle(`${f.stem}.txt`, { create: true });
+        const writable = await fh.createWritable();
+        await writable.write(text);
+        await writable.close();
+      } catch (e) { /* extra copy is optional */ }
+    }
+
+    const name = `${f.stem}.txt`;
+    setStatus(auto ? `auto-saved ${name} → labels/` : `saved ${name} → labels/`);
+    state.reviewed.add(f.name);
+    state.dirty = false;
+    saving = false;
+    updateSaveUi();
+    updateHeader();
+  }
+
+  async function goToIndex(next) {
+    if (state.index < 0) return;
+    if (next < 0 || next >= state.files.length) return;
+    if (next === state.index) { updateHeader(); return; }
+    clearTimeout(autoSaveTimer);
+    if (state.dirty) await saveCurrentLabel();
+    state.index = next;
+    await loadCurrentImageAndLabel();
+  }
+
+  async function navigate(delta) {
+    if (state.index < 0) return;
+    await goToIndex(state.index + delta);
+  }
+
+  async function jumpToTypedImage() {
+    if (state.index < 0 || !state.files.length) return;
+    const n = parseInt(progressInput.value, 10);
+    if (!Number.isFinite(n) || n < 1) {
+      setStatus(`enter a number 1–${state.files.length}`);
+      updateHeader();
+      return;
+    }
+    const target = Math.min(n, state.files.length);
+    await goToIndex(target - 1);
+    progressInput.blur();
+  }
+
+  progressInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); jumpToTypedImage(); }
+  });
+  progressInput.addEventListener("focus", () => progressInput.select());
+  progressInput.addEventListener("blur", () => updateHeader());
+
+  $("prevBtn").addEventListener("click", () => navigate(-1));
+  $("nextBtn").addEventListener("click", () => navigate(1));
+  $("saveBtn").addEventListener("click", () => saveCurrentLabel());
+  $("autoSaveBtn").addEventListener("click", () => {
+    state.autoSave = !state.autoSave;
+    $("autoSaveBtn").textContent = `Auto-Save: ${state.autoSave ? "ON" : "OFF"}`;
+    $("autoSaveBtn").classList.toggle("primary", state.autoSave);
+    if (state.autoSave && state.dirty) scheduleAutoSave();
+    else clearTimeout(autoSaveTimer);
+    setStatus(state.autoSave ? "auto-save on" : "auto-save off — press S to save");
+  });
+
+  $("exportZipBtn").addEventListener("click", async () => {
+    if (state.dirty) await saveCurrentLabel();
+    const zip = new JSZip();
+    Object.entries(state.fallbackLabelBlobs).forEach(([stem, text]) => {
+      zip.file(`${stem}.txt`, text);
+    });
+    // include any labels that were saved via FS handle too, for a full backup
+    if (state.labelsDirHandle) {
+      for (const f of state.files) {
+        try {
+          const fh = await state.labelsDirHandle.getFileHandle(`${f.stem}.txt`);
+          const file = await fh.getFile();
+          zip.file(`${f.stem}.txt`, await file.text());
+        } catch (e) { /* no label for this image */ }
+      }
+    }
+    const blob = await zip.generateAsync({ type: "blob" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "labels.zip";
+    a.click();
+    setStatus("labels.zip downloaded");
+  });
+
+  function updateNavButtons() {
+    $("prevBtn").disabled = state.index <= 0;
+    $("nextBtn").disabled = state.index < 0 || state.index >= state.files.length - 1;
+    $("saveBtn").disabled = state.index < 0;
+    $("exportZipBtn").disabled = state.files.length === 0;
+    $("clickSegmentBtn").disabled = state.index < 0;
+    $("autoDetectBtn").disabled = state.index < 0;
+    updateSaveUi();
+  }
+
+  function updateHeader() {
+    if (state.index < 0) {
+      filenameLabel.textContent = "no folder open";
+      progressInput.value = "";
+      progressInput.disabled = true;
+      progressTotal.textContent = "—";
+      return;
+    }
+    filenameLabel.textContent = state.files[state.index].name;
+    if (document.activeElement !== progressInput) {
+      progressInput.value = String(state.index + 1);
+    }
+    progressInput.disabled = false;
+    progressTotal.textContent = String(state.files.length);
+    reviewedCountEl.textContent = `reviewed ${state.reviewed.size} / ${state.files.length}`;
+    updateNavButtons();
+  }
+
+  function renderSidePanels() {
+    if (!state.polygons.length) {
+      polygonListEl.innerHTML = `<span style="color:var(--text-faint)">none — press N to draw one</span>`;
+    } else {
+      polygonListEl.innerHTML = "";
+      state.polygons.forEach((p, idx) => {
+        const div = document.createElement("div");
+        div.className = "polygon-item" + (idx === state.selectedPoly ? " selected" : "");
+        div.innerHTML = `
+          <div class="pi-top">
+            <span>${getClassIds(p).map(id =>
+              `<span style="color:${classColor(id)}">${escapeHtml(classLabel(id))}</span>`
+            ).join('<span style="color:var(--text-faint)"> + </span>')}</span>
+            <span style="color:var(--text-faint)">#${idx}</span>
+          </div>
+          <div class="pi-verts">${p.points.length} vertices</div>
+        `;
+        div.addEventListener("click", () => { state.selectedPoly = idx; draw(); renderSidePanels(); });
+        polygonListEl.appendChild(div);
+      });
+    }
+
+    if (state.selectedPoly >= 0 && state.polygons[state.selectedPoly]) {
+      const p = state.polygons[state.selectedPoly];
+      const assigned = getClassIds(p);
+      const groups = uniqueGroups();
+      const replaceOptions = groups.map(group => {
+        const ids = [];
+        state.classes.forEach((_, id) => {
+          if ((state.classGroup[id] || "Custom") === group) ids.push(id);
+        });
+        if (!ids.length) return "";
+        const opts = ids.map(id =>
+          `<option value="${id}" ${assigned.length === 1 && assigned[0] === id ? "selected" : ""}>${escapeHtml(state.classes[id])}</option>`
+        ).join("");
+        return `<optgroup label="${escapeHtml(group)}">${opts}</optgroup>`;
+      }).join("");
+      const addOptions = groups.map(group => {
+        const ids = [];
+        state.classes.forEach((_, id) => {
+          if ((state.classGroup[id] || "Custom") === group && !assigned.includes(id)) ids.push(id);
+        });
+        if (!ids.length) return "";
+        const opts = ids.map(id =>
+          `<option value="${id}">${escapeHtml(state.classes[id])}</option>`
+        ).join("");
+        return `<optgroup label="${escapeHtml(group)}">${opts}</optgroup>`;
+      }).join("");
+      const chips = assigned.map(id => `
+        <span class="class-chip">
+          <span class="class-swatch" style="background:${classColor(id)}"></span>
+          <span style="color:${classColor(id)}">${escapeHtml(classLabel(id))}</span>
+          <button type="button" class="chip-x" data-remove-class="${id}" title="Remove this class">×</button>
+        </span>
+      `).join("");
+      selectedInfoEl.innerHTML = `
+        <div class="class-create" style="margin:0; padding:0; border:none;">
+          <div class="hint">Assigned classes</div>
+        </div>
+        <div class="class-chip-list">${chips || "<span style='color:var(--text-faint)'>none</span>"}</div>
+        <div class="hint" style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); font-weight:700; margin:0 0 6px 0;">Replace with</div>
+        <select id="polyClassSelect">${replaceOptions || "<option value=''>no classes yet</option>"}</select>
+        <div class="hint" style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); font-weight:700; margin:10px 0 6px 0;">Add another class</div>
+        <select id="polyClassAddSelect">
+          <option value="">choose a class to add…</option>
+          ${addOptions}
+        </select>
+        vertices: ${p.points.length}<br><br>
+        <span style="color:var(--text-faint)">Click a class on the left to replace. Shift-click a class to add it. × on a chip removes that class only.</span>
+      `;
+      $("polyClassSelect").addEventListener("change", (e) => {
+        const id = parseInt(e.target.value, 10);
+        if (Number.isFinite(id)) setActiveClass(id);
+      });
+      $("polyClassAddSelect").addEventListener("change", (e) => {
+        const id = parseInt(e.target.value, 10);
+        if (Number.isFinite(id)) addClassToSelected(id);
+      });
+      selectedInfoEl.querySelectorAll("[data-remove-class]").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          removeClassFromSelected(parseInt(btn.getAttribute("data-remove-class"), 10));
+        });
+      });
+    } else {
+      selectedInfoEl.textContent = "nothing selected — click a mask, or click a fruit to segment one";
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Init
+  // ---------------------------------------------------------------------
+
+  function init() {
+    if (!state.supportsFS) $("unsupported").style.display = "block";
+    resizeCanvasToStage();
+    if (!loadPersistedClasses()) resetToDefaultClasses();
+    else renderClassList();
+    setSegmentStatus("click any unlabeled fruit to segment it, then pick a class");
+    draw();
+    updateHeader();
+  }
+  init();
+
+  window.addEventListener("beforeunload", (e) => {
+    if (!state.dirty) return;
+    e.preventDefault();
+    e.returnValue = "";
+  });
+})();
+</script>
+</body>
+</html>
