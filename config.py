@@ -61,26 +61,25 @@ FORCE_CLASS_ID = None
 # unchanged.
 CLASS_MAP = {}
 
-# Final class names for data.yaml, indexed by the NEW class id.
-#
-# These 10 fine-grained tiers group into 5 major categories for reference
-# (not merged yet -- collapse later via CLASS_MAP if/when needed):
-#   Export Quality     -> premium_export, super_fancy
-#   Premium Domestic   -> extra_fancy, fancy
-#   Standard Retail    -> choice, standard
-#   Commercial / Bulk  -> commercial, utility
-#   Non-Fresh           -> processing, reject
+# Final class names for data.yaml, indexed by subclass id.
+# Class types (EXP/DOM/RET/COM/NMR) are UI groups only and are not written
+# to YOLO .txt files. Subclass ids start at 0:
+#   Export Quality (EXP)   -> 0 Export Premium, 1 Prime Export
+#   Domestic Premium (DOM) -> 2 Domestic Premium, 3 Prime Retail
+#   Retail Standard (RET)  -> 4 Standard Retail, 5 Everyday Retail
+#   Commercial (COM)       -> 6 Commercial, 7 Value
+#   Non-Market (NMR)       -> 8 Processing, 9 Reject
 CLASS_NAMES = {
-    0: "premium_export",
-    1: "super_fancy",
-    2: "extra_fancy",
-    3: "fancy",
-    4: "choice",
-    5: "standard",
-    6: "commercial",
-    7: "utility",
-    8: "processing",
-    9: "reject",
+    0: "Export Premium",
+    1: "Prime Export",
+    2: "Domestic Premium",
+    3: "Prime Retail",
+    4: "Standard Retail",
+    5: "Everyday Retail",
+    6: "Commercial",
+    7: "Value",
+    8: "Processing",
+    9: "Reject",
 }
 
 # ---------------------------------------------------------------------------

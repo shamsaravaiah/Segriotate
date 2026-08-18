@@ -40,7 +40,22 @@ PORT = 8765
 FASTSAM_MODEL = "FastSAM-s.pt"
 
 app = Flask(__name__)
-CORS(app)
+CORS(
+    app,
+    resources={r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "PUT", "OPTIONS"],
+        "allow_headers": ["Content-Type"],
+    }},
+)
+
+
+@app.after_request
+def add_cors_headers(resp):
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    resp.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, OPTIONS"
+    resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return resp
 
 if not config.MODEL_PATH.exists():
     sys.exit(f"Model not found at {config.MODEL_PATH} -- put your .pt file there first.")
@@ -92,22 +107,22 @@ def health():
     })
 
 
-@app.route("/label", methods=["GET"])
-def get_label():
-    """Load the YOLO .txt for one image stem from labels/."""
-    try:
-        path = label_file(request.args.get("stem", ""))
-    except ValueError as e:
-        return jsonify({"error": str(e)}), 400
-    if not path.exists():
-        return jsonify({"text": None, "path": str(path)}), 404
-    return jsonify({"text": path.read_text(encoding="utf-8"), "path": str(path)})
+@app.route("/label", methods=["GET", "POST", "PUT", "OPTIONS"])
+def label():
+    """Read or write a YOLO .txt in labels/. OPTIONS is required for browser CORS."""
+    if request.method == "OPTIONS":
+        return ("", 204)
 
+    if request.method == "GET":
+        try:
+            path = label_file(request.args.get("stem", ""))
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        if not path.exists():
+            return jsonify({"text": None, "path": str(path)})
+        return jsonify({"text": path.read_text(encoding="utf-8"), "path": str(path)})
 
-@app.route("/label", methods=["PUT", "POST"])
-def save_label():
-    """Write the YOLO .txt for one image stem into labels/."""
-    data = request.get_json(force=True) or {}
+    data = request.get_json(force=True, silent=True) or {}
     try:
         path = label_file(data.get("stem", ""))
     except ValueError as e:
@@ -115,7 +130,10 @@ def save_label():
     text = data.get("text", "")
     if not isinstance(text, str):
         return jsonify({"error": "text must be a string"}), 400
-    path.write_text(text, encoding="utf-8")
+    config.LABEL_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".txt.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(path)
     return jsonify({"ok": True, "path": str(path)})
 
 
@@ -181,4 +199,4 @@ def segment():
 if __name__ == "__main__":
     print(f"Server running on http://127.0.0.1:{PORT}")
     print("Leave this running, then open tools/label_editor.html.\n")
-    app.run(host="127.0.0.1", port=PORT)
+    app.run(host="127.0.0.1", port=PORT, threaded=True)

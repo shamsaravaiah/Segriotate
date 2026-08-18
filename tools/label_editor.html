@@ -234,8 +234,8 @@
       <div class="shortcut"><span>Finish polygon</span><kbd>Enter</kbd></div>
       <div class="shortcut"><span>Cancel / deselect</span><kbd>Esc</kbd></div>
       <div class="shortcut"><span>Delete polygon</span><kbd>Del</kbd></div>
-      <div class="shortcut"><span>Replace class 1–10</span><kbd>1…9, 0</kbd></div>
-      <div class="shortcut"><span>Add extra class</span><kbd>Shift+1…9</kbd></div>
+      <div class="shortcut"><span>Replace class 0–9</span><kbd>0…9</kbd></div>
+      <div class="shortcut"><span>Add extra class</span><kbd>Shift+0…9</kbd></div>
       <div class="shortcut"><span>Insert vertex</span><kbd>dbl-click edge</kbd></div>
       <div class="shortcut"><span>Delete vertex</span><kbd>right-click vertex</kbd></div>
       <div class="shortcut"><span>Pan</span><kbd>space+drag</kbd></div>
@@ -288,18 +288,17 @@
   const IMAGE_EXT = new Set(["jpg","jpeg","png","bmp","tif","tiff"]);
   const VERTEX_HIT_R = 8;      // px, hit radius for grabbing a vertex
   const EDGE_HIT_R = 6;        // px, hit radius for inserting a point on an edge
-  const CLASSES_STORAGE_KEY = "mask-editor-classes-v2";
-  const CLASSES_STORAGE_KEY_LEGACY = "mask-editor-classes-v1";
+  const CLASSES_STORAGE_KEY = "mask-editor-classes-v3";
   const AUTO_SAVE_MS = 500;
 
-  // Default fruit-grading taxonomy, grouped high -> low quality.
-  // Pre-loaded on start; users can still add their own classes below these.
+  // Default fruit-grading taxonomy. YOLO .txt files store subclass ids only
+  // (0–9 for the defaults; custom classes continue 10, 11, …).
   const DEFAULT_GROUPS = [
-    { label: "Export Quality",    names: ["premium_export", "super_fancy"] },
-    { label: "Premium Domestic",  names: ["extra_fancy", "fancy"] },
-    { label: "Standard Retail",   names: ["choice", "standard"] },
-    { label: "Commercial / Bulk", names: ["commercial", "utility"] },
-    { label: "Non-Fresh",         names: ["processing", "reject"] },
+    { label: "Export Quality (EXP)",   names: ["Export Premium", "Prime Export"] },
+    { label: "Domestic Premium (DOM)", names: ["Domestic Premium", "Prime Retail"] },
+    { label: "Retail Standard (RET)",  names: ["Standard Retail", "Everyday Retail"] },
+    { label: "Commercial (COM)",       names: ["Commercial", "Value"] },
+    { label: "Non-Market (NMR)",       names: ["Processing", "Reject"] },
   ];
 
   function buildDefaultClasses() {
@@ -459,8 +458,7 @@
   function classColor(id) { return PALETTE[id % PALETTE.length]; }
 
   function keyLabelForId(id) {
-    if (id < 9) return String(id + 1);   // classes 0-8 -> keys 1-9
-    if (id === 9) return "0";             // class 9 -> key 0
+    if (id >= 0 && id <= 9) return String(id);
     return "";
   }
 
@@ -532,8 +530,7 @@
 
   function loadPersistedClasses() {
     try {
-      const raw = localStorage.getItem(CLASSES_STORAGE_KEY)
-        || localStorage.getItem(CLASSES_STORAGE_KEY_LEGACY);
+      const raw = localStorage.getItem(CLASSES_STORAGE_KEY);
       if (!raw) return false;
       const data = JSON.parse(raw);
       if (!Array.isArray(data.classes)) return false;
@@ -677,9 +674,9 @@
     setStatus("classes cleared — add types and classes on the left");
   });
   $("resetClassesBtn").addEventListener("click", () => {
-    if (confirm("Reset class list to the 10 default grading classes? Custom types and classes you added will be removed from this list (polygons already using them keep their class id).")) {
+    if (confirm("Reset to the 10 default subclasses (ids 0–9)? Custom types and classes you added will be removed from this list (polygons already using them keep their class id).")) {
       resetToDefaultClasses();
-      setStatus("restored 10 default grading classes");
+      setStatus("restored default subclasses 0–9");
     }
   });
 
@@ -1313,7 +1310,7 @@
     }
 
     if (/^Digit[0-9]$/.test(e.code)) {
-      const id = e.code === "Digit0" ? 9 : parseInt(e.code.slice(5), 10) - 1;
+      const id = parseInt(e.code.slice(5), 10); // Digit0 → class 0
       if (id < state.classes.length) {
         e.preventDefault();
         if (e.shiftKey) addClassToSelected(id);
@@ -1366,6 +1363,7 @@
 
   let autoSaveTimer = null;
   let saving = false;
+  let pendingSave = false;
 
   function updateSaveUi() {
     const btn = $("saveBtn");
@@ -1387,31 +1385,53 @@
     }, AUTO_SAVE_MS);
   }
 
+  async function writeLabelToServer(stem, text) {
+    const res = await fetch(state.segmentServerUrl + "/label", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stem, text }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+    return res.json().catch(() => ({}));
+  }
+
   async function saveCurrentLabel(opts) {
     const auto = !!(opts && opts.auto);
-    if (state.index < 0) return;
-    if (saving) return;
-    if (auto && !state.dirty) return;
+    if (state.index < 0) return false;
+    if (auto && !state.dirty) return true;
+    if (saving) {
+      pendingSave = true;
+      return false;
+    }
     saving = true;
     clearTimeout(autoSaveTimer);
     const f = state.files[state.index];
     const text = polygonsToYolo();
     state.fallbackLabelBlobs[f.stem] = text;
 
-    try {
-      const res = await fetch(state.segmentServerUrl + "/label", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stem: f.stem, text }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `HTTP ${res.status}`);
+    let saved = false;
+    let lastErr = null;
+    for (let attempt = 0; attempt < 2 && !saved; attempt++) {
+      try {
+        await writeLabelToServer(f.stem, text);
+        saved = true;
+      } catch (e) {
+        lastErr = e;
+        if (attempt === 0) await new Promise(r => setTimeout(r, 250));
       }
-    } catch (e) {
-      setStatus(`save to labels/ failed: ${e.message} — is the server running?`);
+    }
+
+    if (!saved) {
+      setStatus(`save to labels/ failed: ${lastErr && lastErr.message ? lastErr.message : lastErr} — restart: python scripts/segment_server.py`);
       saving = false;
-      return;
+      if (pendingSave) {
+        pendingSave = false;
+        setTimeout(() => saveCurrentLabel({ auto: true }), 500);
+      }
+      return false;
     }
 
     if (state.labelsDirHandle) {
@@ -1426,10 +1446,18 @@
     const name = `${f.stem}.txt`;
     setStatus(auto ? `auto-saved ${name} → labels/` : `saved ${name} → labels/`);
     state.reviewed.add(f.name);
-    state.dirty = false;
     saving = false;
+    if (pendingSave) {
+      pendingSave = false;
+      state.dirty = true;
+      updateSaveUi();
+      updateHeader();
+      return saveCurrentLabel({ auto: true });
+    }
+    state.dirty = false;
     updateSaveUi();
     updateHeader();
+    return true;
   }
 
   async function goToIndex(next) {
@@ -1437,7 +1465,13 @@
     if (next < 0 || next >= state.files.length) return;
     if (next === state.index) { updateHeader(); return; }
     clearTimeout(autoSaveTimer);
-    if (state.dirty) await saveCurrentLabel();
+    if (state.dirty) {
+      const ok = await saveCurrentLabel();
+      if (!ok) {
+        setStatus("save failed — staying on this image so nothing is lost");
+        return;
+      }
+    }
     state.index = next;
     await loadCurrentImageAndLabel();
   }
