@@ -167,8 +167,8 @@ class MainWindow(QMainWindow):
         self._make_menu()
         self.view.loadFinished.connect(self._on_load_finished)
         self._labels_chosen = False
-        self._last_labels_dir = str(Path.home())
-        self._last_images_dir = str(Path.home())
+        self._last_labels_dir = str(ROOT / "labels")
+        self._last_images_dir = str(ROOT)
 
         self._deadline = time.time() + 180
         if already_running:
@@ -225,15 +225,13 @@ class MainWindow(QMainWindow):
         editor_ready = bool(ok) and url.startswith(BASE)
         self._open_act.setEnabled(editor_ready)
         self._labels_act.setEnabled(editor_ready)
-        if editor_ready and not self._labels_chosen:
-            QTimer.singleShot(0, self.prompt_labels_folder_required)
 
     def _choose_directory(self, title: str, start: str | None = None) -> str:
         dialog = QFileDialog(self, title)
         dialog.setFileMode(QFileDialog.FileMode.Directory)
         dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
         # Native dialogs include a New Folder control on macOS/Windows.
-        dialog.setDirectory(start or str(Path.home()))
+        dialog.setDirectory(start or str(ROOT))
         try:
             dialog.setLabelText(QFileDialog.DialogLabel.Accept, "Select")
         except Exception:
@@ -255,18 +253,23 @@ class MainWindow(QMainWindow):
     def pick_images_folder_json(self) -> str:
         import segment_server
 
-        folder = self._choose_directory("Open Images", self._last_images_dir)
+        folder = self._choose_directory("Open Images", str(ROOT))
         if not folder:
             return json.dumps({"ok": False})
         try:
             segment_server.set_images_dir(folder)
-        except ValueError as e:
+        except (ValueError, OSError) as e:
             return json.dumps({"ok": False, "error": str(e)})
-        self._last_images_dir = folder
+        self._last_images_dir = str(ROOT)
+        labels = segment_server.get_labels_dir()
+        if labels:
+            self._labels_chosen = True
+            self._last_labels_dir = str(labels)
         return json.dumps({
             "ok": True,
             "dir": folder,
             "files": segment_server.list_image_files(),
+            "labels_dir": str(labels) if labels else None,
         })
 
     def open_images_from_menu(self):
@@ -282,11 +285,13 @@ class MainWindow(QMainWindow):
             f" window.applyServerFileList({files_js}, {dir_js});"
             "}"
         )
+        if data.get("labels_dir"):
+            self._notify_labels_dir(data["labels_dir"])
 
     def pick_labels_folder_json(self) -> str:
         import segment_server
 
-        folder = self._choose_directory("Choose folder for labels", self._last_labels_dir)
+        folder = self._choose_directory("Choose folder for labels", str(ROOT))
         if not folder:
             return json.dumps({"ok": False})
         try:
@@ -312,31 +317,6 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "Segriotate", data["error"])
             return
         self._notify_labels_dir(data["dir"])
-
-    def prompt_labels_folder_required(self):
-        if self._labels_chosen:
-            return
-        while not self._labels_chosen:
-            data = json.loads(self.pick_labels_folder_json())
-            if data.get("ok"):
-                self._notify_labels_dir(data["dir"])
-                return
-            if data.get("error"):
-                QMessageBox.warning(self, "Segriotate", data["error"])
-                continue
-            box = QMessageBox(self)
-            box.setWindowTitle("Segriotate")
-            box.setText("Choose a folder where label files will be saved.")
-            box.setInformativeText(
-                "Browse to a location and use New Folder if you need to create one. "
-                "YOLO .txt files for each image are written there."
-            )
-            box.addButton("Choose Folder…", QMessageBox.ButtonRole.AcceptRole)
-            quit_btn = box.addButton("Quit", QMessageBox.ButtonRole.RejectRole)
-            box.exec()
-            if box.clickedButton() == quit_btn:
-                QApplication.instance().quit()
-                return
 
 
 def main():

@@ -183,7 +183,7 @@
         <button id="openLabelsBtn" title="Choose where YOLO .txt label files are saved">Labels Folder…</button>
       </div>
       <div id="labelsDirHint" style="font-size:11px; color:var(--text-faint); margin-bottom:8px; line-height:1.45;">
-        Choose a labels folder after startup. Open Images… to load photos. You can create a new folder in the dialog.
+        Open Images… to pick a folder (e.g. img-1). Labels are saved to labels/&lt;folder&gt;-labels.
       </div>
       <div class="row">
         <button id="prevBtn" disabled>◀ Prev</button>
@@ -259,7 +259,7 @@
     <canvas id="canvas" width="800" height="600"></canvas>
     <div id="dropzone">
       <div class="big">No image loaded</div>
-      <p>Click <b>Open Images…</b> to choose a folder. Nothing is loaded until you pick one. Labels are saved to the folder you chose at startup.</p>
+      <p>Click <b>Open Images…</b> to choose a folder in the project root (for example <b>img-1</b>). Labels are saved automatically to <b>labels/img-1-labels</b>.</p>
     </div>
   </section>
 
@@ -723,7 +723,7 @@
     if (hint) {
       hint.innerHTML = state.labelsDir
         ? `Saves go to <b style="color:var(--text-dim); font-weight:600">${escapeHtml(state.labelsDir)}</b>`
-        : "Choose a labels folder after startup. Open Images… to load photos. You can create a new folder in the dialog.";
+        : "Open Images… to pick a folder (e.g. img-1). Labels are saved to labels/&lt;folder&gt;-labels.";
     }
     if (state.labelsDir) setStatus("labels will be saved to " + state.labelsDir);
   }
@@ -780,6 +780,7 @@
       try {
         const data = await pickDesktopImagesFolder();
         if (!data || !data.ok) return;
+        if (data.labels_dir) setLabelsDir(data.labels_dir);
         applyServerFileList(data.files, data.dir);
       } catch (e) {
         setStatus("could not open folder: " + (e.message || e));

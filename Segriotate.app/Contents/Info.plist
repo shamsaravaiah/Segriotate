@@ -16,6 +16,8 @@
   <string>APPL</string>
   <key>CFBundleExecutable</key>
   <string>Segriotate</string>
+  <key>CFBundleIconFile</key>
+  <string>Segriotate</string>
   <key>LSMinimumSystemVersion</key>
   <string>11.0</string>
   <key>NSHighResolutionCapable</key>

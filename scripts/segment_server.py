@@ -90,12 +90,21 @@ def get_images_dir() -> Path | None:
     return _images_dir
 
 
+def paired_labels_dir(images_folder: Path) -> Path:
+    """labels/<folder-name>-labels under the project root."""
+    name = images_folder.name.strip() or "images"
+    if name in {".", ".."}:
+        name = "images"
+    return (config.PROJECT_ROOT / "labels" / f"{name}-labels").resolve()
+
+
 def set_images_dir(path: str | Path) -> Path:
     global _images_dir
     folder = Path(path).expanduser().resolve()
     if not folder.is_dir():
         raise ValueError(f"not a directory: {folder}")
     _images_dir = folder
+    set_labels_dir(paired_labels_dir(folder))
     return folder
 
 
@@ -293,7 +302,13 @@ def project_images_dir():
         folder = set_images_dir(data.get("path", ""))
     except (TypeError, ValueError) as e:
         return jsonify({"error": str(e)}), 400
-    return jsonify({"ok": True, "dir": str(folder), "files": list_image_files()})
+    labels = get_labels_dir()
+    return jsonify({
+        "ok": True,
+        "dir": str(folder),
+        "files": list_image_files(),
+        "labels_dir": str(labels) if labels else None,
+    })
 
 
 @app.route("/project/labels-dir", methods=["GET", "POST"])

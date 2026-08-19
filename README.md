@@ -13,9 +13,10 @@ python desktop_app.py
 ```
 
 Or double-click **`Segriotate.app`** (macOS) in this folder. First launch can
-take a minute while models load. On startup you choose (or create) a folder
-for labels. Then use **Open Images…** (or File → Open Images) to pick photos.
-Nothing is loaded until you choose an images folder.
+take a minute while models load. Use **Open Images…** and pick a folder in
+the project root (for example `img-1`). Labels are saved automatically to
+`labels/img-1-labels/`. **Labels Folder…** is only needed if you want a
+different destination.
 
 Quit with Cmd+Q — that also stops the local server.
 
@@ -98,8 +99,9 @@ python scripts/04_train.py
 python desktop_app.py
 ```
 
-or double-click `Segriotate.app`. On startup, choose (or create) the folder
-for labels. Then click **Open Images…** to choose photos.
+or double-click `Segriotate.app`. Click **Open Images…** and pick a folder
+in the project root (for example `img-1`). Labels go to `labels/img-1-labels/`
+automatically. Use **Labels Folder…** only to override that.
 
 ### Browser (optional)
 
@@ -108,9 +110,9 @@ for labels. Then click **Open Images…** to choose photos.
 
 1. Start the desktop app (or the server + browser). The first run loads your
    `segmentation.pt` plus FastSAM. FastSAM weights (~140MB) download once.
-2. Choose a **labels folder** when the app asks (create one in the dialog if needed).
-3. **Open Images…** and choose the folder that contains your images.
-4. For each image:
+2. **Open Images…** and choose a folder in the project root (for example `img-1`).
+   Labels are written to `labels/img-1-labels/` automatically.
+3. For each image:
    - **Auto-Detect: ON** (default) — your model runs automatically and
      pre-fills every object it finds, as soon as the image loads.
    - Fix any pre-filled polygon: drag a vertex to move it, double-click an
