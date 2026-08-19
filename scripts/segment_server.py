@@ -3,7 +3,7 @@ Local inference + UI server for Segriotate.
 
 1. /          -- the label editor (HTML)
 2. /detect    -- YOLO segmentation.pt on the current image
-3. /segment   -- click-to-segment fallback (FastSAM or MobileSAM)
+3. /segment   -- click-to-segment fallback (.pt or .engine: FastSAM, MobileSAM, …)
 4. /label     -- read/write YOLO .txt files in labels/
 5. /media     -- serve images from the chosen images folder
 
@@ -33,11 +33,16 @@ from PIL import Image  # noqa: E402
 from ultralytics import FastSAM, SAM, YOLO  # noqa: E402
 
 PORT = getattr(config, "SERVER_PORT", 8765)
-CLICK_MODELS = {
-    "fastsam": {"file": "FastSAM-s.pt", "kind": "fastsam", "label": "FastSAM"},
-    "mobilesam": {"file": "mobile_sam.pt", "kind": "sam", "label": "MobileSAM"},
+PT_DIR = config.PROJECT_ROOT / "models" / "dot-pt"
+ENGINE_DIR = config.PROJECT_ROOT / "models" / "dot-engine"
+CLICK_FORMATS = ("pt", "engine")
+DEFAULT_CLICK_FORMAT = "pt"
+CLICK_SKIP_STEMS = {"segmentation"}  # Auto-Detect YOLO, not a click model
+CLICK_LABELS = {
+    "FastSAM-s": "FastSAM",
+    "FastSAM-x": "FastSAM-x",
+    "mobile_sam": "MobileSAM",
 }
-DEFAULT_CLICK_MODEL = "fastsam"
 TOOLS_DIR = config.PROJECT_ROOT / "tools"
 VENDOR_DIR = TOOLS_DIR / "vendor"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -68,7 +73,10 @@ detect_model = YOLO(str(config.MODEL_PATH))
 if detect_model.task != "segment":
     sys.exit(f"{config.MODEL_PATH} is a '{detect_model.task}' model, not a segmentation model.")
 
-print("Click-to-segment models (FastSAM / MobileSAM) load on first use.\n")
+print("Click-to-segment models load on first use from models/dot-pt or models/dot-engine.\n")
+
+PT_DIR.mkdir(parents=True, exist_ok=True)
+ENGINE_DIR.mkdir(parents=True, exist_ok=True)
 
 _click_models: dict = {}
 _click_lock = threading.Lock()
@@ -131,21 +139,76 @@ def remap_class(old_class_id: int):
     return old_class_id
 
 
-def get_click_model(name: str):
-    """Lazy-load FastSAM or MobileSAM. Returns (key, model, spec)."""
-    key = str(name or DEFAULT_CLICK_MODEL).strip().lower()
-    if key not in CLICK_MODELS:
-        raise ValueError(f"unknown click model: {name}")
-    spec = CLICK_MODELS[key]
+def click_format_dir(fmt: str) -> Path:
+    if fmt == "pt":
+        return PT_DIR
+    if fmt == "engine":
+        return ENGINE_DIR
+    raise ValueError(f"unknown click format: {fmt}")
+
+
+def click_kind(stem: str) -> str:
+    s = stem.lower().replace("-", "_")
+    if s.startswith("fastsam"):
+        return "fastsam"
+    if "sam" in s:
+        return "sam"
+    return "yolo"
+
+
+def click_label(stem: str) -> str:
+    return CLICK_LABELS.get(stem, stem)
+
+
+def list_click_models(fmt: str) -> list[dict]:
+    folder = click_format_dir(fmt)
+    suffix = f".{fmt}"
+    items = []
+    if not folder.is_dir():
+        return items
+    for p in sorted(folder.iterdir(), key=lambda x: x.name.lower()):
+        if not p.is_file() or p.suffix.lower() != suffix:
+            continue
+        if p.stem in CLICK_SKIP_STEMS:
+            continue
+        items.append({
+            "id": p.stem,
+            "label": click_label(p.stem),
+            "file": p.name,
+            "kind": click_kind(p.stem),
+        })
+    return items
+
+
+def get_click_model(fmt: str, stem: str):
+    """Lazy-load a click model from models/dot-pt or models/dot-engine."""
+    fmt = str(fmt or DEFAULT_CLICK_FORMAT).strip().lower()
+    stem = Path(str(stem or "")).name
+    if fmt not in CLICK_FORMATS:
+        raise ValueError(f"unknown click format: {fmt}")
+    if not stem or stem in {".", ".."} or stem in CLICK_SKIP_STEMS:
+        raise ValueError("unknown click model")
+    path = (click_format_dir(fmt) / f"{stem}.{fmt}").resolve()
+    folder = click_format_dir(fmt).resolve()
+    if path.parent != folder:
+        raise ValueError("invalid click model path")
+    if not path.is_file():
+        raise ValueError(f"model not found: {path}")
+    kind = click_kind(stem)
+    cache_key = f"{fmt}:{stem}"
+    spec = {"file": path.name, "kind": kind, "label": click_label(stem), "path": path}
     with _click_lock:
-        if key not in _click_models:
-            print(f"Loading {spec['file']} for click-fallback (auto-downloads on first run)...")
-            if spec["kind"] == "fastsam":
-                _click_models[key] = FastSAM(spec["file"])
+        if cache_key not in _click_models:
+            print(f"Loading {path} for click-fallback...")
+            path_str = str(path)
+            if kind == "fastsam":
+                _click_models[cache_key] = FastSAM(path_str)
+            elif kind == "sam":
+                _click_models[cache_key] = SAM(path_str)
             else:
-                _click_models[key] = SAM(spec["file"])
-            print(f"{spec['label']} loaded.")
-        return key, _click_models[key], spec
+                _click_models[cache_key] = YOLO(path_str)
+            print(f"{spec['label']} ({fmt}) loaded.")
+        return cache_key, _click_models[cache_key], spec
 
 
 def run_click_predict(kind: str, model, img, px: float, py: float, conf: float):
@@ -184,11 +247,23 @@ def health():
         "status": "ok",
         "app": "segriotate",
         "detect_model": str(config.MODEL_PATH),
-        "click_models": {k: v["file"] for k, v in CLICK_MODELS.items()},
+        "click_models_pt": list_click_models("pt"),
+        "click_models_engine": list_click_models("engine"),
         "click_models_loaded": sorted(_click_models),
         "label_dir": str(effective_labels_dir()),
         "labels_dir_set": get_labels_dir() is not None,
         "images_dir": str(get_images_dir()) if get_images_dir() else None,
+    })
+
+
+@app.route("/click-models")
+def click_models():
+    """List click-to-segment weights in models/dot-pt and models/dot-engine."""
+    return jsonify({
+        "formats": list(CLICK_FORMATS),
+        "pt": list_click_models("pt"),
+        "engine": list_click_models("engine"),
+        "dirs": {"pt": str(PT_DIR), "engine": str(ENGINE_DIR)},
     })
 
 
@@ -314,7 +389,7 @@ def detect():
 
 @app.route("/segment", methods=["POST"])
 def segment():
-    """Point-prompted click fallback (FastSAM or MobileSAM) for objects YOLO missed."""
+    """Point-prompted click fallback (.pt or .engine) for objects YOLO missed."""
     data = request.get_json(force=True)
     try:
         img = decode_image(data["image"])
@@ -322,7 +397,10 @@ def segment():
         return jsonify({"error": f"could not decode image: {e}"}), 400
 
     try:
-        key, model, spec = get_click_model(data.get("model", DEFAULT_CLICK_MODEL))
+        key, model, spec = get_click_model(
+            data.get("format", DEFAULT_CLICK_FORMAT),
+            data.get("model", ""),
+        )
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
@@ -338,10 +416,10 @@ def segment():
 
     result = results[0]
     if result.masks is None or len(result.masks) == 0:
-        return jsonify({"points": [], "model": key})
+        return jsonify({"points": [], "model": key, "label": spec["label"]})
 
     polygon = result.masks.xyn[0].tolist()
-    return jsonify({"points": polygon, "model": key})
+    return jsonify({"points": polygon, "model": key, "label": spec["label"]})
 
 
 if __name__ == "__main__":

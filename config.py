@@ -18,7 +18,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
-MODEL_PATH = PROJECT_ROOT / "models" / "segmentation.pt"   # your existing YOLO-seg model
+MODEL_PATH = PROJECT_ROOT / "models" / "dot-pt" / "segmentation.pt"   # your existing YOLO-seg model
 IMAGE_DIR = PROJECT_ROOT / "images"                          # the 10,000 raw images
 LABEL_DIR = PROJECT_ROOT / "labels"                          # YOLO .txt annotations (editor writes here)
 

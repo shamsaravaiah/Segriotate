@@ -6,7 +6,9 @@ FastSAM-s.pt
 mobile_sam.pt
 images/
 labels/
-models/
+models/**/*.pt
+models/**/*.engine
+models/**/*.onnx
 output/
 review/
 dataset/

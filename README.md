@@ -61,7 +61,9 @@ pip install -r requirements.txt
 
 Put your files in place:
 
-- `models/segmentation.pt` — your existing YOLO segmentation model
+- `models/dot-pt/segmentation.pt` — your existing YOLO segmentation model
+- `models/dot-pt/` — `.pt` click-to-segment weights (FastSAM, MobileSAM, …)
+- `models/dot-engine/` — TensorRT `.engine` click models (export on the Orin)
 - `images/` — all 10,000 source images (subfolders are fine)
 
 ## 2. Edit `config.py`

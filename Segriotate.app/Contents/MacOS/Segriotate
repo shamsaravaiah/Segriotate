@@ -9,8 +9,8 @@ if [ ! -x "$ROOT/venv/bin/python" ]; then
   exit 1
 fi
 
-if [ ! -f "$ROOT/models/segmentation.pt" ]; then
-  osascript -e 'display alert "Segriotate" message "Model not found. Put segmentation.pt in the models folder." as critical'
+if [ ! -f "$ROOT/models/dot-pt/segmentation.pt" ]; then
+  osascript -e 'display alert "Segriotate" message "Model not found. Put segmentation.pt in models/dot-pt." as critical'
   exit 1
 fi
 

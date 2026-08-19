@@ -195,9 +195,14 @@
       </div>
       <button id="autoSaveBtn" class="primary" style="width:100%; margin-top:6px;">Auto-Save: ON</button>
       <button id="clickSegmentBtn" class="primary" style="width:100%; margin-top:6px;" disabled>Click-to-Segment: ON</button>
-      <select id="clickModelSelect" title="Model used for Click-to-Segment" disabled style="margin-top:6px;">
-        <option value="fastsam">FastSAM</option>
-        <option value="mobilesam">MobileSAM</option>
+      <div class="hint" style="margin-top:8px;">Format</div>
+      <select id="clickFormatSelect" title="Click-to-Segment weight format" disabled>
+        <option value="pt">.pt (PyTorch)</option>
+        <option value="engine">.engine (TensorRT)</option>
+      </select>
+      <div class="hint" style="margin-top:8px;">Model</div>
+      <select id="clickModelSelect" title="Click-to-Segment model" disabled>
+        <option value="">No models found</option>
       </select>
       <button id="autoDetectBtn" class="primary" style="width:100%; margin-top:6px;" disabled>Auto-Detect: ON</button>
       <div id="segmentStatus" style="font-size:11px; color:var(--text-faint); margin-top:6px; line-height:1.5;"></div>
@@ -338,7 +343,9 @@
     labelsWritable: false,
     fallbackLabelBlobs: {},      // stem -> text, used for zip export in fallback mode
     clickToSegment: true,
-    clickModel: "fastsam",
+    clickFormat: "pt",
+    clickModel: "",
+    clickCatalog: { pt: [], engine: [] },
     autoDetect: true,
     autoSave: true,
     segmentServerUrl: (location.protocol === "http:" || location.protocol === "https:")
@@ -1216,17 +1223,66 @@
   }
 
   // ---------------------------------------------------------------------
-  // Click-to-segment (FastSAM or MobileSAM via local server)
+  // Click-to-segment (.pt / .engine + FastSAM / MobileSAM via local server)
   // ---------------------------------------------------------------------
 
+  function clickModelsForFormat(fmt) {
+    return state.clickCatalog[fmt] || [];
+  }
+
   function clickModelLabel() {
-    return state.clickModel === "mobilesam" ? "MobileSAM" : "FastSAM";
+    const fmt = state.clickFormat || "pt";
+    const list = clickModelsForFormat(fmt);
+    const hit = list.find(m => m.id === state.clickModel);
+    if (hit) return `${hit.label} (.${fmt})`;
+    return state.clickModel ? `${state.clickModel} (.${fmt})` : `.${fmt}`;
+  }
+
+  function fillClickModelOptions() {
+    const sel = $("clickModelSelect");
+    const list = clickModelsForFormat(state.clickFormat);
+    sel.innerHTML = "";
+    if (!list.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = state.clickFormat === "engine"
+        ? "No .engine files in models/dot-engine"
+        : "No .pt files in models/dot-pt";
+      sel.appendChild(opt);
+      state.clickModel = "";
+      return;
+    }
+    if (!list.some(m => m.id === state.clickModel)) {
+      state.clickModel = list[0].id;
+    }
+    list.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.label;
+      sel.appendChild(opt);
+    });
+    sel.value = state.clickModel;
   }
 
   function updateClickModelSelect() {
-    const sel = $("clickModelSelect");
-    sel.value = state.clickModel;
-    sel.disabled = state.index < 0 || !state.clickToSegment;
+    const off = state.index < 0 || !state.clickToSegment;
+    $("clickFormatSelect").disabled = off;
+    $("clickModelSelect").disabled = off || !clickModelsForFormat(state.clickFormat).length;
+    $("clickFormatSelect").value = state.clickFormat;
+    fillClickModelOptions();
+  }
+
+  async function loadClickModelCatalog() {
+    try {
+      const res = await fetch(state.segmentServerUrl + "/click-models");
+      if (!res.ok) return;
+      const data = await res.json();
+      state.clickCatalog = {
+        pt: Array.isArray(data.pt) ? data.pt : [],
+        engine: Array.isArray(data.engine) ? data.engine : [],
+      };
+      updateClickModelSelect();
+    } catch (_) { /* server not up yet */ }
   }
 
   function getImageBase64() {
@@ -1241,6 +1297,12 @@
   async function segmentAtClick(nx, ny) {
     if (!requireClass()) return;
     if (state.segmenting) return;
+    if (!state.clickModel) {
+      setSegmentStatus(state.clickFormat === "engine"
+        ? "no .engine model in models/dot-engine — export TensorRT on the Orin first"
+        : "no click model in models/dot-pt");
+      return;
+    }
     const gen = state.loadGen;
     const stem = currentStem();
     if (stem == null) return;
@@ -1257,6 +1319,7 @@
           image: getImageBase64(),
           x: nx,
           y: ny,
+          format: state.clickFormat,
           model: state.clickModel,
         }),
         signal: ac.signal,
@@ -1306,9 +1369,22 @@
       : "");
   });
 
-  $("clickModelSelect").addEventListener("change", () => {
-    state.clickModel = $("clickModelSelect").value === "mobilesam" ? "mobilesam" : "fastsam";
+  $("clickFormatSelect").addEventListener("change", () => {
+    state.clickFormat = $("clickFormatSelect").value === "engine" ? "engine" : "pt";
+    state.clickModel = "";
+    updateClickModelSelect();
     if (state.clickToSegment) {
+      setSegmentStatus(clickModelsForFormat(state.clickFormat).length
+        ? `Click-to-Segment will use ${clickModelLabel()}`
+        : state.clickFormat === "engine"
+          ? "no .engine files yet — export on the Orin into models/dot-engine"
+          : "no .pt click models in models/dot-pt");
+    }
+  });
+
+  $("clickModelSelect").addEventListener("change", () => {
+    state.clickModel = $("clickModelSelect").value || "";
+    if (state.clickToSegment && state.clickModel) {
       setSegmentStatus(`Click-to-Segment will use ${clickModelLabel()}`);
     }
   });
@@ -1876,6 +1952,7 @@
         if (data.dir) setLabelsDir(data.dir);
       }
     } catch (e) { /* server not up yet */ }
+    await loadClickModelCatalog();
   }
   init();
   window.addEventListener("qtbridgeready", () => {
