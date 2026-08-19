@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .DS_Store
 FastSAM-s.pt
+mobile_sam.pt
 images/
 labels/
 models/

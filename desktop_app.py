@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Segriotate desktop launcher.
+Segriotate desktop launcher (PyQt).
 
-Starts the local Flask server in the background, opens a native window,
-and shuts everything down when the window is closed.
+Starts the local Flask server in the background, opens a native Qt window
+with the HTML editor, and shuts everything down when the window is closed.
 
     python desktop_app.py
 """
@@ -18,6 +18,22 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+
+try:
+    # WebEngine must be imported before QApplication is created.
+    from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSlot
+    from PyQt6.QtGui import QAction
+    from PyQt6.QtWebChannel import QWebChannel
+    from PyQt6.QtWebEngineCore import QWebEngineScript
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWidgets import (
+        QApplication,
+        QFileDialog,
+        QMainWindow,
+        QMessageBox,
+    )
+except ImportError:
+    sys.exit("PyQt6 WebEngine is not installed. Run: pip install PyQt6 PyQt6-WebEngine")
 
 ROOT = Path(__file__).resolve().parent
 os.chdir(ROOT)
@@ -64,6 +80,31 @@ SPLASH_HTML = """<!DOCTYPE html>
 </html>
 """
 
+FAIL_HTML = """<!DOCTYPE html>
+<html lang="en">
+<body style="background:#14161a;color:#f97362;font-family:sans-serif;padding:40px">
+  <h1>Segriotate failed to start</h1>
+  <p>The local server did not become ready. Check the terminal for errors,
+  and make sure port 8765 is free.</p>
+</body>
+</html>
+"""
+
+DESKTOP_FLAG_JS = "window.IS_DESKTOP_APP = true;"
+
+BRIDGE_JS = """
+(function connectBridge() {
+  if (typeof QWebChannel === "undefined" || typeof qt === "undefined" || !qt.webChannelTransport) {
+    setTimeout(connectBridge, 50);
+    return;
+  }
+  new QWebChannel(qt.webChannelTransport, function (channel) {
+    window.qtBridge = channel.objects.bridge;
+    window.dispatchEvent(new Event("qtbridgeready"));
+  });
+})();
+"""
+
 
 def probe_health() -> dict | None:
     try:
@@ -89,56 +130,216 @@ def run_flask():
     )
 
 
-class Bridge:
-    """Called from the HTML window (native folder picker)."""
+class Bridge(QObject):
+    """Called from the HTML editor (native folder picker)."""
 
-    def __init__(self):
-        self.window = None
+    def __init__(self, window: MainWindow):
+        super().__init__(window)
+        self._window = window
 
-    def pick_images_folder(self):
-        import webview
+    @pyqtSlot(result=str)
+    def pick_images_folder(self) -> str:
+        return self._window.pick_images_folder_json()
+
+    @pyqtSlot(result=str)
+    def pick_labels_folder(self) -> str:
+        return self._window.pick_labels_folder_json()
+
+
+class MainWindow(QMainWindow):
+    def __init__(self, already_running: bool):
+        super().__init__()
+        self.setWindowTitle("Segriotate")
+        self.resize(1440, 900)
+        self.setMinimumSize(960, 640)
+        self.setStyleSheet("background: #14161a;")
+
+        self.view = QWebEngineView(self)
+        self.view.setStyleSheet("background: #14161a;")
+        self.setCentralWidget(self.view)
+
+        self.bridge = Bridge(self)
+        self.channel = QWebChannel(self.view.page())
+        self.channel.registerObject("bridge", self.bridge)
+        self.view.page().setWebChannel(self.channel)
+        self._inject_bridge_scripts()
+
+        self._make_menu()
+        self.view.loadFinished.connect(self._on_load_finished)
+        self._labels_chosen = False
+        self._last_labels_dir = str(Path.home())
+        self._last_images_dir = str(Path.home())
+
+        self._deadline = time.time() + 180
+        if already_running:
+            self.view.setUrl(QUrl(BASE + "/"))
+        else:
+            self.view.setHtml(SPLASH_HTML)
+            self._poll = QTimer(self)
+            self._poll.timeout.connect(self._check_server)
+            self._poll.start(400)
+
+    def _inject_script(self, name, source_code=None, source_url=None, when=None, subframes=False):
+        script = QWebEngineScript()
+        script.setName(name)
+        if source_url is not None:
+            script.setSourceUrl(source_url)
+        if source_code is not None:
+            script.setSourceCode(source_code)
+        script.setInjectionPoint(when)
+        script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+        script.setRunsOnSubFrames(subframes)
+        self.view.page().scripts().insert(script)
+
+    def _inject_bridge_scripts(self):
+        created = QWebEngineScript.InjectionPoint.DocumentCreation
+        ready = QWebEngineScript.InjectionPoint.DocumentReady
+        self._inject_script(
+            "qwebchannel",
+            source_url=QUrl("qrc:///qtwebchannel/qwebchannel.js"),
+            when=created,
+            subframes=True,
+        )
+        self._inject_script("segriotate-desktop-flag", source_code=DESKTOP_FLAG_JS, when=created)
+        self._inject_script("segriotate-bridge", source_code=BRIDGE_JS, when=ready)
+
+    def _make_menu(self):
+        file_menu = self.menuBar().addMenu("&File")
+        self._open_act = QAction("Open Images…", self)
+        self._open_act.setShortcut("Ctrl+O")
+        self._open_act.setEnabled(False)
+        self._open_act.triggered.connect(self.open_images_from_menu)
+        file_menu.addAction(self._open_act)
+        self._labels_act = QAction("Choose Labels Folder…", self)
+        self._labels_act.setEnabled(False)
+        self._labels_act.triggered.connect(self.choose_labels_folder_from_menu)
+        file_menu.addAction(self._labels_act)
+        file_menu.addSeparator()
+        quit_act = QAction("Quit", self)
+        quit_act.setShortcut("Ctrl+Q")
+        quit_act.triggered.connect(QApplication.instance().quit)
+        file_menu.addAction(quit_act)
+
+    def _on_load_finished(self, ok):
+        url = self.view.url().toString()
+        editor_ready = bool(ok) and url.startswith(BASE)
+        self._open_act.setEnabled(editor_ready)
+        self._labels_act.setEnabled(editor_ready)
+        if editor_ready and not self._labels_chosen:
+            QTimer.singleShot(0, self.prompt_labels_folder_required)
+
+    def _choose_directory(self, title: str, start: str | None = None) -> str:
+        dialog = QFileDialog(self, title)
+        dialog.setFileMode(QFileDialog.FileMode.Directory)
+        dialog.setOption(QFileDialog.Option.ShowDirsOnly, True)
+        # Native dialogs include a New Folder control on macOS/Windows.
+        dialog.setDirectory(start or str(Path.home()))
+        try:
+            dialog.setLabelText(QFileDialog.DialogLabel.Accept, "Select")
+        except Exception:
+            pass
+        if dialog.exec() != QFileDialog.DialogCode.Accepted:
+            return ""
+        selected = dialog.selectedFiles()
+        return selected[0] if selected else ""
+
+    def _check_server(self):
+        if health_ok():
+            self._poll.stop()
+            self.view.setUrl(QUrl(BASE + "/"))
+            return
+        if time.time() > self._deadline:
+            self._poll.stop()
+            self.view.setHtml(FAIL_HTML)
+
+    def pick_images_folder_json(self) -> str:
         import segment_server
 
-        if self.window is None:
-            return {"ok": False, "error": "window not ready"}
-        result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
-        if not result:
-            return {"ok": False}
-        folder = result[0]
+        folder = self._choose_directory("Open Images", self._last_images_dir)
+        if not folder:
+            return json.dumps({"ok": False})
         try:
             segment_server.set_images_dir(folder)
         except ValueError as e:
-            return {"ok": False, "error": str(e)}
-        return {
+            return json.dumps({"ok": False, "error": str(e)})
+        self._last_images_dir = folder
+        return json.dumps({
             "ok": True,
             "dir": folder,
             "files": segment_server.list_image_files(),
-        }
+        })
 
-
-def wait_then_load(window):
-    deadline = time.time() + 180
-    while time.time() < deadline:
-        if health_ok():
-            window.load_url(f"{BASE}/")
+    def open_images_from_menu(self):
+        data = json.loads(self.pick_images_folder_json())
+        if not data.get("ok"):
+            if data.get("error"):
+                QMessageBox.warning(self, "Segriotate", data["error"])
             return
-        time.sleep(0.4)
-    window.load_html(
-        "<html><body style='background:#14161a;color:#f97362;font-family:sans-serif;"
-        "padding:40px'>"
-        "<h1>Segriotate failed to start</h1>"
-        "<p>The local server did not become ready. Check the terminal for errors, "
-        "and make sure port 8765 is free.</p>"
-        "</body></html>"
-    )
+        files_js = json.dumps(data["files"])
+        dir_js = json.dumps(data["dir"])
+        self.view.page().runJavaScript(
+            "if (window.applyServerFileList) {"
+            f" window.applyServerFileList({files_js}, {dir_js});"
+            "}"
+        )
+
+    def pick_labels_folder_json(self) -> str:
+        import segment_server
+
+        folder = self._choose_directory("Choose folder for labels", self._last_labels_dir)
+        if not folder:
+            return json.dumps({"ok": False})
+        try:
+            saved = segment_server.set_labels_dir(folder)
+        except (ValueError, OSError) as e:
+            return json.dumps({"ok": False, "error": str(e)})
+        self._labels_chosen = True
+        self._last_labels_dir = str(saved)
+        return json.dumps({"ok": True, "dir": str(saved)})
+
+    def _notify_labels_dir(self, folder: str):
+        dir_js = json.dumps(folder)
+        self.view.page().runJavaScript(
+            "if (window.setLabelsDir) {"
+            f" window.setLabelsDir({dir_js});"
+            "}"
+        )
+
+    def choose_labels_folder_from_menu(self):
+        data = json.loads(self.pick_labels_folder_json())
+        if not data.get("ok"):
+            if data.get("error"):
+                QMessageBox.warning(self, "Segriotate", data["error"])
+            return
+        self._notify_labels_dir(data["dir"])
+
+    def prompt_labels_folder_required(self):
+        if self._labels_chosen:
+            return
+        while not self._labels_chosen:
+            data = json.loads(self.pick_labels_folder_json())
+            if data.get("ok"):
+                self._notify_labels_dir(data["dir"])
+                return
+            if data.get("error"):
+                QMessageBox.warning(self, "Segriotate", data["error"])
+                continue
+            box = QMessageBox(self)
+            box.setWindowTitle("Segriotate")
+            box.setText("Choose a folder where label files will be saved.")
+            box.setInformativeText(
+                "Browse to a location and use New Folder if you need to create one. "
+                "YOLO .txt files for each image are written there."
+            )
+            box.addButton("Choose Folder…", QMessageBox.ButtonRole.AcceptRole)
+            quit_btn = box.addButton("Quit", QMessageBox.ButtonRole.RejectRole)
+            box.exec()
+            if box.clickedButton() == quit_btn:
+                QApplication.instance().quit()
+                return
 
 
 def main():
-    try:
-        import webview
-    except ImportError:
-        sys.exit("pywebview is not installed. Run: pip install pywebview")
-
     already = probe_health()
     if already and already.get("app") != "segriotate":
         sys.exit(
@@ -149,29 +350,15 @@ def main():
     if not already_running:
         threading.Thread(target=run_flask, daemon=True).start()
 
-    bridge = Bridge()
-    if already_running:
-        window = webview.create_window(
-            "Segriotate",
-            url=f"{BASE}/",
-            js_api=bridge,
-            width=1440,
-            height=900,
-            min_size=(960, 640),
-        )
-    else:
-        window = webview.create_window(
-            "Segriotate",
-            html=SPLASH_HTML,
-            js_api=bridge,
-            width=1440,
-            height=900,
-            min_size=(960, 640),
-        )
-    bridge.window = window
-    if not already_running:
-        threading.Thread(target=wait_then_load, args=(window,), daemon=True).start()
-    webview.start()
+    try:
+        QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
+    except AttributeError:
+        pass
+    app = QApplication(sys.argv)
+    app.setApplicationName("Segriotate")
+    window = MainWindow(already_running)
+    window.show()
+    sys.exit(app.exec())
 
 
 if __name__ == "__main__":

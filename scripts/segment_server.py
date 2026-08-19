@@ -3,7 +3,7 @@ Local inference + UI server for Segriotate.
 
 1. /          -- the label editor (HTML)
 2. /detect    -- YOLO segmentation.pt on the current image
-3. /segment   -- FastSAM click-to-segment fallback
+3. /segment   -- click-to-segment fallback (FastSAM or MobileSAM)
 4. /label     -- read/write YOLO .txt files in labels/
 5. /media     -- serve images from the chosen images folder
 
@@ -19,6 +19,7 @@ import base64
 import io
 import os
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -29,10 +30,14 @@ os.chdir(config.PROJECT_ROOT)
 from flask import Flask, abort, jsonify, request, send_from_directory  # noqa: E402
 from flask_cors import CORS  # noqa: E402
 from PIL import Image  # noqa: E402
-from ultralytics import YOLO, FastSAM  # noqa: E402
+from ultralytics import FastSAM, SAM, YOLO  # noqa: E402
 
 PORT = getattr(config, "SERVER_PORT", 8765)
-FASTSAM_MODEL = "FastSAM-s.pt"
+CLICK_MODELS = {
+    "fastsam": {"file": "FastSAM-s.pt", "kind": "fastsam", "label": "FastSAM"},
+    "mobilesam": {"file": "mobile_sam.pt", "kind": "sam", "label": "MobileSAM"},
+}
+DEFAULT_CLICK_MODEL = "fastsam"
 TOOLS_DIR = config.PROJECT_ROOT / "tools"
 VENDOR_DIR = TOOLS_DIR / "vendor"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
@@ -63,11 +68,13 @@ detect_model = YOLO(str(config.MODEL_PATH))
 if detect_model.task != "segment":
     sys.exit(f"{config.MODEL_PATH} is a '{detect_model.task}' model, not a segmentation model.")
 
-print(f"Loading {FASTSAM_MODEL} for click-fallback (auto-downloads on first run)...")
-fastsam_model = FastSAM(FASTSAM_MODEL)
-print("Both models loaded.\n")
+print("Click-to-segment models (FastSAM / MobileSAM) load on first use.\n")
+
+_click_models: dict = {}
+_click_lock = threading.Lock()
 
 _images_dir: Path | None = None
+_labels_dir: Path | None = None
 
 
 def get_images_dir() -> Path | None:
@@ -82,6 +89,26 @@ def set_images_dir(path: str | Path) -> Path:
         raise ValueError(f"not a directory: {folder}")
     _images_dir = folder
     return folder
+
+
+def get_labels_dir() -> Path | None:
+    """Folder the user picked for YOLO .txt files, if any."""
+    return _labels_dir
+
+
+def set_labels_dir(path: str | Path) -> Path:
+    """Set the labels output folder, creating it (and parents) if needed."""
+    global _labels_dir
+    folder = Path(path).expanduser().resolve()
+    folder.mkdir(parents=True, exist_ok=True)
+    if not folder.is_dir():
+        raise ValueError(f"not a directory: {folder}")
+    _labels_dir = folder
+    return folder
+
+
+def effective_labels_dir() -> Path:
+    return _labels_dir if _labels_dir is not None else config.LABEL_DIR
 
 
 def list_image_files() -> list[dict]:
@@ -104,6 +131,34 @@ def remap_class(old_class_id: int):
     return old_class_id
 
 
+def get_click_model(name: str):
+    """Lazy-load FastSAM or MobileSAM. Returns (key, model, spec)."""
+    key = str(name or DEFAULT_CLICK_MODEL).strip().lower()
+    if key not in CLICK_MODELS:
+        raise ValueError(f"unknown click model: {name}")
+    spec = CLICK_MODELS[key]
+    with _click_lock:
+        if key not in _click_models:
+            print(f"Loading {spec['file']} for click-fallback (auto-downloads on first run)...")
+            if spec["kind"] == "fastsam":
+                _click_models[key] = FastSAM(spec["file"])
+            else:
+                _click_models[key] = SAM(spec["file"])
+            print(f"{spec['label']} loaded.")
+        return key, _click_models[key], spec
+
+
+def run_click_predict(kind: str, model, img, px: float, py: float, conf: float):
+    """Point-prompt inference. SAM accepts two point-list shapes; try both."""
+    if kind == "fastsam":
+        return model(img, points=[[px, py]], labels=[1], conf=conf, verbose=False)
+    results = model.predict(img, points=[[px, py]], labels=[1], verbose=False)
+    result = results[0] if results else None
+    if result is None or result.masks is None or len(result.masks) == 0:
+        results = model.predict(img, points=[[[px, py]]], labels=[[1]], verbose=False)
+    return results
+
+
 def decode_image(img_b64: str) -> Image.Image:
     if "," in img_b64[:60]:
         img_b64 = img_b64.split(",", 1)[1]
@@ -111,13 +166,14 @@ def decode_image(img_b64: str) -> Image.Image:
 
 
 def label_file(stem: str) -> Path:
-    """Resolve a YOLO .txt path inside labels/, rejecting path traversal."""
+    """Resolve a YOLO .txt path inside the chosen labels folder, rejecting path traversal."""
     stem = Path(str(stem)).name
     if not stem or stem in {".", ".."}:
         raise ValueError("invalid label stem")
-    config.LABEL_DIR.mkdir(parents=True, exist_ok=True)
-    path = (config.LABEL_DIR / f"{stem}.txt").resolve()
-    if path.parent != config.LABEL_DIR.resolve():
+    folder = effective_labels_dir()
+    folder.mkdir(parents=True, exist_ok=True)
+    path = (folder / f"{stem}.txt").resolve()
+    if path.parent != folder.resolve():
         raise ValueError("invalid label stem")
     return path
 
@@ -128,8 +184,10 @@ def health():
         "status": "ok",
         "app": "segriotate",
         "detect_model": str(config.MODEL_PATH),
-        "fastsam_model": FASTSAM_MODEL,
-        "label_dir": str(config.LABEL_DIR),
+        "click_models": {k: v["file"] for k, v in CLICK_MODELS.items()},
+        "click_models_loaded": sorted(_click_models),
+        "label_dir": str(effective_labels_dir()),
+        "labels_dir_set": get_labels_dir() is not None,
         "images_dir": str(get_images_dir()) if get_images_dir() else None,
     })
 
@@ -161,6 +219,22 @@ def project_images_dir():
     except (TypeError, ValueError) as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"ok": True, "dir": str(folder), "files": list_image_files()})
+
+
+@app.route("/project/labels-dir", methods=["GET", "POST"])
+def project_labels_dir():
+    if request.method == "GET":
+        folder = get_labels_dir()
+        return jsonify({
+            "dir": str(folder) if folder else None,
+            "effective": str(effective_labels_dir()),
+        })
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        folder = set_labels_dir(data.get("path", ""))
+    except (TypeError, ValueError, OSError) as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"ok": True, "dir": str(folder)})
 
 
 @app.route("/media/<path:filename>")
@@ -198,7 +272,8 @@ def label():
     text = data.get("text", "")
     if not isinstance(text, str):
         return jsonify({"error": "text must be a string"}), 400
-    config.LABEL_DIR.mkdir(parents=True, exist_ok=True)
+    folder = effective_labels_dir()
+    folder.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".txt.tmp")
     tmp.write_text(text, encoding="utf-8")
     tmp.replace(path)
@@ -239,12 +314,17 @@ def detect():
 
 @app.route("/segment", methods=["POST"])
 def segment():
-    """Point-prompted FastSAM fallback for one click, for objects the main model missed."""
+    """Point-prompted click fallback (FastSAM or MobileSAM) for objects YOLO missed."""
     data = request.get_json(force=True)
     try:
         img = decode_image(data["image"])
     except Exception as e:
         return jsonify({"error": f"could not decode image: {e}"}), 400
+
+    try:
+        key, model, spec = get_click_model(data.get("model", DEFAULT_CLICK_MODEL))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     x, y = float(data["x"]), float(data["y"])   # normalized 0-1
     conf = float(data.get("conf", 0.4))
@@ -252,16 +332,16 @@ def segment():
     px, py = x * w, y * h
 
     try:
-        results = fastsam_model(img, points=[[px, py]], labels=[1], conf=conf, verbose=False)
+        results = run_click_predict(spec["kind"], model, img, px, py, conf)
     except Exception as e:
         return jsonify({"error": f"inference failed: {e}"}), 500
 
     result = results[0]
     if result.masks is None or len(result.masks) == 0:
-        return jsonify({"points": []})
+        return jsonify({"points": [], "model": key})
 
     polygon = result.masks.xyn[0].tolist()
-    return jsonify({"points": polygon})
+    return jsonify({"points": polygon, "model": key})
 
 
 if __name__ == "__main__":

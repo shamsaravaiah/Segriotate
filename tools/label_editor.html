@@ -180,10 +180,10 @@
       <div class="section-title">Project</div>
       <div class="row" style="margin-bottom:6px;">
         <button id="openImagesBtn">Open Images…</button>
-        <button id="openLabelsBtn" title="Optional: also write a copy to another folder">Open Labels…</button>
+        <button id="openLabelsBtn" title="Choose where YOLO .txt label files are saved">Labels Folder…</button>
       </div>
-      <div style="font-size:11px; color:var(--text-faint); margin-bottom:8px; line-height:1.45;">
-        Saves go to the project <b style="color:var(--text-dim); font-weight:600">labels/</b> folder. Open Images uses a native folder dialog in the desktop app.
+      <div id="labelsDirHint" style="font-size:11px; color:var(--text-faint); margin-bottom:8px; line-height:1.45;">
+        Choose a labels folder after startup. Open Images… to load photos. You can create a new folder in the dialog.
       </div>
       <div class="row">
         <button id="prevBtn" disabled>◀ Prev</button>
@@ -195,6 +195,10 @@
       </div>
       <button id="autoSaveBtn" class="primary" style="width:100%; margin-top:6px;">Auto-Save: ON</button>
       <button id="clickSegmentBtn" class="primary" style="width:100%; margin-top:6px;" disabled>Click-to-Segment: ON</button>
+      <select id="clickModelSelect" title="Model used for Click-to-Segment" disabled style="margin-top:6px;">
+        <option value="fastsam">FastSAM</option>
+        <option value="mobilesam">MobileSAM</option>
+      </select>
       <button id="autoDetectBtn" class="primary" style="width:100%; margin-top:6px;" disabled>Auto-Detect: ON</button>
       <div id="segmentStatus" style="font-size:11px; color:var(--text-faint); margin-top:6px; line-height:1.5;"></div>
     </div>
@@ -250,7 +254,7 @@
     <canvas id="canvas" width="800" height="600"></canvas>
     <div id="dropzone">
       <div class="big">No image loaded</div>
-      <p>Click <b>Open Images…</b> to choose a folder. Nothing is loaded until you pick one. Labels are saved to <code>labels/</code>.</p>
+      <p>Click <b>Open Images…</b> to choose a folder. Nothing is loaded until you pick one. Labels are saved to the folder you chose at startup.</p>
     </div>
   </section>
 
@@ -311,6 +315,7 @@
     supportsFS: !!window.showDirectoryPicker,
     imagesDirHandle: null,
     labelsDirHandle: null,
+    labelsDir: "",               // folder YOLO .txt files are written to
     files: [],                 // [{name, stem, handle?, url?, file?}]
     index: -1,
     classes: [],                // ["class_0", ...]
@@ -333,6 +338,7 @@
     labelsWritable: false,
     fallbackLabelBlobs: {},      // stem -> text, used for zip export in fallback mode
     clickToSegment: true,
+    clickModel: "fastsam",
     autoDetect: true,
     autoSave: true,
     segmentServerUrl: (location.protocol === "http:" || location.protocol === "https:")
@@ -340,6 +346,9 @@
       : "http://127.0.0.1:8765",
     imgBase64: null,              // cached data URL of current image, for segment requests
     segmenting: false,
+    loadGen: 0,                   // bumped on every image/folder change; stale detects are dropped
+    detectAbort: null,
+    segmentAbort: null,
   };
 
   // ---------------------------------------------------------------------
@@ -683,10 +692,60 @@
   });
 
   function isDesktopApp() {
-    return !!(window.pywebview && window.pywebview.api);
+    return !!window.IS_DESKTOP_APP || !!window.qtBridge;
+  }
+
+  function waitForDesktopBridge() {
+    if (window.qtBridge) return Promise.resolve(window.qtBridge);
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("desktop folder picker not ready")), 8000);
+      window.addEventListener("qtbridgeready", () => {
+        clearTimeout(timer);
+        resolve(window.qtBridge);
+      }, { once: true });
+    });
+  }
+
+  function labelsSaveWhere() {
+    return state.labelsDir || "labels/";
+  }
+
+  function setLabelsDir(dir) {
+    state.labelsDir = dir || "";
+    const hint = $("labelsDirHint");
+    if (hint) {
+      hint.innerHTML = state.labelsDir
+        ? `Saves go to <b style="color:var(--text-dim); font-weight:600">${escapeHtml(state.labelsDir)}</b>`
+        : "Choose a labels folder after startup. Open Images… to load photos. You can create a new folder in the dialog.";
+    }
+    if (state.labelsDir) setStatus("labels will be saved to " + state.labelsDir);
+  }
+  window.setLabelsDir = setLabelsDir;
+
+  function pickDesktopLabelsFolder() {
+    return waitForDesktopBridge().then(bridge => new Promise((resolve, reject) => {
+      if (!bridge.pick_labels_folder) {
+        reject(new Error("desktop labels picker not available"));
+        return;
+      }
+      bridge.pick_labels_folder(raw => {
+        try { resolve(JSON.parse(raw)); }
+        catch (e) { reject(e); }
+      });
+    }));
+  }
+
+  function pickDesktopImagesFolder() {
+    return waitForDesktopBridge().then(bridge => new Promise((resolve, reject) => {
+      bridge.pick_images_folder(raw => {
+        try { resolve(JSON.parse(raw)); }
+        catch (e) { reject(e); }
+      });
+    }));
   }
 
   function applyServerFileList(files, dirLabel) {
+    beginLoad();
     state.files = (files || []).map(f => ({
       name: f.name,
       stem: f.stem,
@@ -701,8 +760,9 @@
       dropzone.style.display = "";
     }
     const where = dirLabel ? ` from ${dirLabel}` : "";
-    setStatus(`${state.files.length} image(s) found${where} — saving .txt files to labels/`);
+    setStatus(`${state.files.length} image(s) found${where} — saving .txt files to ${labelsSaveWhere()}`);
   }
+  window.applyServerFileList = applyServerFileList;
 
   // ---------------------------------------------------------------------
   // Folder opening — desktop native dialog, else File System Access API
@@ -711,7 +771,7 @@
   $("openImagesBtn").addEventListener("click", async () => {
     if (isDesktopApp()) {
       try {
-        const data = await window.pywebview.api.pick_images_folder();
+        const data = await pickDesktopImagesFolder();
         if (!data || !data.ok) return;
         applyServerFileList(data.files, data.dir);
       } catch (e) {
@@ -730,12 +790,26 @@
   });
 
   $("openLabelsBtn").addEventListener("click", async () => {
+    if (isDesktopApp()) {
+      try {
+        const data = await pickDesktopLabelsFolder();
+        if (!data || !data.ok) return;
+        setLabelsDir(data.dir);
+        if (state.index >= 0) await loadCurrentLabel(state.loadGen, currentStem());
+      } catch (e) {
+        setStatus("could not set labels folder: " + (e.message || e));
+      }
+      return;
+    }
     if (state.supportsFS) {
       try {
         state.labelsDirHandle = await window.showDirectoryPicker({ mode: "readwrite" });
         state.labelsWritable = true;
-        setStatus("extra labels folder connected — also saving to project labels/");
-        if (state.index >= 0) await loadCurrentLabel();
+        if (state.labelsDirHandle && state.labelsDirHandle.name) {
+          setLabelsDir(state.labelsDirHandle.name);
+        }
+        setStatus("labels folder connected — saving .txt files there");
+        if (state.index >= 0) await loadCurrentLabel(state.loadGen, currentStem());
       } catch (e) { /* cancelled */ }
     } else {
       $("fallbackLabelsInput").click();
@@ -751,6 +825,7 @@
       files.push({ name, stem: name.replace(/\.[^.]+$/, ""), handle });
     }
     files.sort((a, b) => a.name.localeCompare(b.name));
+    beginLoad();
     state.files = files;
     state.index = files.length ? 0 : -1;
     updateNavButtons();
@@ -758,7 +833,7 @@
       dropzone.style.display = "none";
       await loadCurrentImageAndLabel();
     }
-    setStatus(`${files.length} image(s) found — saving .txt files to labels/`);
+    setStatus(`${files.length} image(s) found — saving .txt files to ${labelsSaveWhere()}`);
   }
 
   // Fallback: <input webkitdirectory> for browsers without File System Access API
@@ -768,6 +843,7 @@
       return IMAGE_EXT.has(ext);
     });
     fl.sort((a, b) => a.name.localeCompare(b.name));
+    beginLoad();
     state.files = fl.map(f => ({ name: f.name, stem: f.name.replace(/\.[^.]+$/, ""), file: f, url: URL.createObjectURL(f) }));
     state.index = state.files.length ? 0 : -1;
     updateNavButtons();
@@ -775,7 +851,7 @@
       dropzone.style.display = "none";
       loadCurrentImageAndLabel();
     }
-    setStatus(`${state.files.length} image(s) loaded — saving .txt files to project labels/`);
+    setStatus(`${state.files.length} image(s) loaded — saving .txt files to ${labelsSaveWhere()}`);
   });
 
   $("fallbackLabelsInput").addEventListener("change", async (e) => {
@@ -785,23 +861,54 @@
       state.fallbackLabelBlobs[f.name.replace(/\.txt$/, "")] = text;
     }
     setStatus(`${fl.length} label file(s) loaded`);
-    if (state.index >= 0) await loadCurrentLabel();
+    if (state.index >= 0) await loadCurrentLabel(state.loadGen, currentStem());
   });
 
   // ---------------------------------------------------------------------
   // Loading current image + label
   // ---------------------------------------------------------------------
 
+  function currentStem() {
+    return state.index >= 0 && state.files[state.index] ? state.files[state.index].stem : null;
+  }
+
+  function isStale(gen, stem) {
+    return gen !== state.loadGen || currentStem() !== stem;
+  }
+
+  function isAbortError(e) {
+    return !!(e && (e.name === "AbortError" || /aborted/i.test(String(e.message || ""))));
+  }
+
+  function beginLoad() {
+    state.loadGen += 1;
+    if (state.detectAbort) {
+      state.detectAbort.abort();
+      state.detectAbort = null;
+    }
+    if (state.segmentAbort) {
+      state.segmentAbort.abort();
+      state.segmentAbort = null;
+    }
+    state.segmenting = false;
+    return state.loadGen;
+  }
+
   async function loadCurrentImageAndLabel() {
-    await loadCurrentImage();
-    await loadCurrentLabel();
+    const gen = state.loadGen;
+    const stem = currentStem();
+    if (stem == null) return;
+    await loadCurrentImage(gen, stem);
+    if (isStale(gen, stem)) return;
+    await loadCurrentLabel(gen, stem);
+    if (isStale(gen, stem)) return;
     resetView();
     draw();
     updateHeader();
     renderSidePanels();
   }
 
-  async function loadCurrentImage() {
+  async function loadCurrentImage(gen, stem) {
     const f = state.files[state.index];
     let url;
     if (f.handle) {
@@ -814,6 +921,7 @@
     await new Promise((resolve, reject) => {
       img.onload = resolve; img.onerror = reject; img.src = url;
     });
+    if (isStale(gen, stem)) return;
     state.img = img;
     state.imgW = img.naturalWidth;
     state.imgH = img.naturalHeight;
@@ -845,7 +953,7 @@
     return order;
   }
 
-  async function loadCurrentLabel() {
+  async function loadCurrentLabel(gen, stem) {
     clearTimeout(autoSaveTimer);
     const f = state.files[state.index];
     state.polygons = [];
@@ -856,11 +964,14 @@
     let text = null;
     try {
       const res = await fetch(state.segmentServerUrl + "/label?" + new URLSearchParams({ stem: f.stem }));
+      if (isStale(gen, stem)) return;
       if (res.ok) {
         const data = await res.json();
+        if (isStale(gen, stem)) return;
         if (data.text != null) text = data.text;
       }
     } catch (e) { /* server unreachable — fall through */ }
+    if (isStale(gen, stem)) return;
     if (text == null && state.labelsDirHandle) {
       try {
         const fh = await state.labelsDirHandle.getFileHandle(`${f.stem}.txt`);
@@ -868,31 +979,39 @@
         text = await file.text();
       } catch (e) { /* no label yet */ }
     }
+    if (isStale(gen, stem)) return;
     if (text == null && state.fallbackLabelBlobs[f.stem] !== undefined) {
       text = state.fallbackLabelBlobs[f.stem];
     }
     if (text != null) {
       state.polygons = parseYoloSeg(text);
     } else if (state.autoDetect) {
-      await autoDetectCurrentImage();
+      await autoDetectCurrentImage(gen, stem);
     }
+    if (isStale(gen, stem)) return;
     renderClassList();
   }
 
-  async function autoDetectCurrentImage() {
+  async function autoDetectCurrentImage(gen, stem) {
     setSegmentStatus("auto-detecting…");
+    const ac = new AbortController();
+    state.detectAbort = ac;
     try {
       const res = await fetch(state.segmentServerUrl + "/detect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: getImageBase64() }),
+        signal: ac.signal,
       });
+      if (isStale(gen, stem)) return;
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        if (isStale(gen, stem)) return;
         setSegmentStatus(`detect server error: ${err.error || res.status}`);
         return;
       }
       const data = await res.json();
+      if (isStale(gen, stem)) return;
       state.polygons = (data.objects || []).map(o => makePoly(
         [o.classId],
         o.points.map(([x, y]) => [clamp01(x), clamp01(y)]),
@@ -902,7 +1021,10 @@
         ? `${state.polygons.length} object(s) auto-detected`
         : "no objects detected — draw manually or use click-to-segment");
     } catch (e) {
+      if (isAbortError(e) || isStale(gen, stem)) return;
       setSegmentStatus("detect server unreachable — run: python scripts/segment_server.py");
+    } finally {
+      if (state.detectAbort === ac) state.detectAbort = null;
     }
   }
 
@@ -1094,8 +1216,18 @@
   }
 
   // ---------------------------------------------------------------------
-  // Click-to-segment (FastSAM via local server)
+  // Click-to-segment (FastSAM or MobileSAM via local server)
   // ---------------------------------------------------------------------
+
+  function clickModelLabel() {
+    return state.clickModel === "mobilesam" ? "MobileSAM" : "FastSAM";
+  }
+
+  function updateClickModelSelect() {
+    const sel = $("clickModelSelect");
+    sel.value = state.clickModel;
+    sel.disabled = state.index < 0 || !state.clickToSegment;
+  }
 
   function getImageBase64() {
     if (state.imgBase64) return state.imgBase64;
@@ -1109,25 +1241,41 @@
   async function segmentAtClick(nx, ny) {
     if (!requireClass()) return;
     if (state.segmenting) return;
+    const gen = state.loadGen;
+    const stem = currentStem();
+    if (stem == null) return;
     state.segmenting = true;
-    setSegmentStatus("segmenting…");
+    const modelName = clickModelLabel();
+    setSegmentStatus(`segmenting with ${modelName}…`);
+    const ac = new AbortController();
+    state.segmentAbort = ac;
     try {
       const res = await fetch(state.segmentServerUrl + "/segment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: getImageBase64(), x: nx, y: ny }),
+        body: JSON.stringify({
+          image: getImageBase64(),
+          x: nx,
+          y: ny,
+          model: state.clickModel,
+        }),
+        signal: ac.signal,
       });
+      if (isStale(gen, stem)) return;
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
+        if (isStale(gen, stem)) return;
         setSegmentStatus(`server error: ${err.error || res.status}`);
         return;
       }
       const data = await res.json();
+      if (isStale(gen, stem)) return;
       if (!data.points || data.points.length < 3) {
         setSegmentStatus("no object found at that point");
         return;
       }
       if (!requireClass()) return;
+      if (isStale(gen, stem)) return;
       pushUndo();
       state.polygons.push(makePoly(
         [state.activeClassId],
@@ -1136,11 +1284,13 @@
       state.selectedPoly = state.polygons.length - 1;
       markDirty();
       draw(); renderSidePanels();
-      setSegmentStatus(`polygon added ✓ — class ${classLabel(state.activeClassId)}. Click another class to replace, or Shift-click to add a second class.`);
+      setSegmentStatus(`polygon added ✓ (${modelName}) — class ${classLabel(state.activeClassId)}. Click another class to replace, or Shift-click to add a second class.`);
     } catch (e) {
+      if (isAbortError(e) || isStale(gen, stem)) return;
       setSegmentStatus("server unreachable — run: python scripts/segment_server.py");
     } finally {
-      state.segmenting = false;
+      if (state.segmentAbort === ac) state.segmentAbort = null;
+      if (!isStale(gen, stem)) state.segmenting = false;
     }
   }
 
@@ -1150,9 +1300,17 @@
     state.clickToSegment = !state.clickToSegment;
     $("clickSegmentBtn").textContent = `Click-to-Segment: ${state.clickToSegment ? "ON" : "OFF"}`;
     $("clickSegmentBtn").classList.toggle("primary", state.clickToSegment);
+    updateClickModelSelect();
     setSegmentStatus(state.clickToSegment
-      ? "click any unlabeled fruit to segment it, then pick a class"
+      ? `click any unlabeled fruit to segment it with ${clickModelLabel()}, then pick a class`
       : "");
+  });
+
+  $("clickModelSelect").addEventListener("change", () => {
+    state.clickModel = $("clickModelSelect").value === "mobilesam" ? "mobilesam" : "fastsam";
+    if (state.clickToSegment) {
+      setSegmentStatus(`Click-to-Segment will use ${clickModelLabel()}`);
+    }
   });
 
   $("autoDetectBtn").addEventListener("click", () => {
@@ -1443,14 +1601,16 @@
     saving = true;
     clearTimeout(autoSaveTimer);
     const f = state.files[state.index];
+    const stem = f.stem;
+    const name = f.name;
     const text = polygonsToYolo();
-    state.fallbackLabelBlobs[f.stem] = text;
+    state.fallbackLabelBlobs[stem] = text;
 
     let saved = false;
     let lastErr = null;
     for (let attempt = 0; attempt < 2 && !saved; attempt++) {
       try {
-        await writeLabelToServer(f.stem, text);
+        await writeLabelToServer(stem, text);
         saved = true;
       } catch (e) {
         lastErr = e;
@@ -1459,28 +1619,33 @@
     }
 
     if (!saved) {
-      setStatus(`save to labels/ failed: ${lastErr && lastErr.message ? lastErr.message : lastErr} — restart: python scripts/segment_server.py`);
+      setStatus(`save to ${labelsSaveWhere()} failed: ${lastErr && lastErr.message ? lastErr.message : lastErr} — restart: python scripts/segment_server.py`);
       saving = false;
       if (pendingSave) {
         pendingSave = false;
-        setTimeout(() => saveCurrentLabel({ auto: true }), 500);
+        if (currentStem() === stem) {
+          setTimeout(() => saveCurrentLabel({ auto: true }), 500);
+        }
       }
       return false;
     }
 
     if (state.labelsDirHandle) {
       try {
-        const fh = await state.labelsDirHandle.getFileHandle(`${f.stem}.txt`, { create: true });
+        const fh = await state.labelsDirHandle.getFileHandle(`${stem}.txt`, { create: true });
         const writable = await fh.createWritable();
         await writable.write(text);
         await writable.close();
       } catch (e) { /* extra copy is optional */ }
     }
 
-    const name = `${f.stem}.txt`;
-    setStatus(auto ? `auto-saved ${name} → labels/` : `saved ${name} → labels/`);
-    state.reviewed.add(f.name);
+    setStatus(auto ? `auto-saved ${stem}.txt → ${labelsSaveWhere()}` : `saved ${stem}.txt → ${labelsSaveWhere()}`);
+    state.reviewed.add(name);
     saving = false;
+    if (currentStem() !== stem) {
+      pendingSave = false;
+      return true;
+    }
     if (pendingSave) {
       pendingSave = false;
       state.dirty = true;
@@ -1499,6 +1664,10 @@
     if (next < 0 || next >= state.files.length) return;
     if (next === state.index) { updateHeader(); return; }
     clearTimeout(autoSaveTimer);
+    beginLoad();
+    if (saving) {
+      for (let i = 0; i < 40 && saving; i++) await new Promise(r => setTimeout(r, 50));
+    }
     if (state.dirty) {
       const ok = await saveCurrentLabel();
       if (!ok) {
@@ -1577,6 +1746,7 @@
     $("exportZipBtn").disabled = state.files.length === 0;
     $("clickSegmentBtn").disabled = state.index < 0;
     $("autoDetectBtn").disabled = state.index < 0;
+    updateClickModelSelect();
     updateSaveUi();
   }
 
@@ -1691,7 +1861,7 @@
   // Init
   // ---------------------------------------------------------------------
 
-  function init() {
+  async function init() {
     if (!state.supportsFS && !isDesktopApp()) $("unsupported").style.display = "block";
     resizeCanvasToStage();
     if (!loadPersistedClasses()) resetToDefaultClasses();
@@ -1699,9 +1869,16 @@
     setSegmentStatus("open a folder with Open Images…");
     draw();
     updateHeader();
+    try {
+      const res = await fetch(state.segmentServerUrl + "/project/labels-dir");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.dir) setLabelsDir(data.dir);
+      }
+    } catch (e) { /* server not up yet */ }
   }
   init();
-  window.addEventListener("pywebviewready", () => {
+  window.addEventListener("qtbridgeready", () => {
     $("unsupported").style.display = "none";
   });
 
