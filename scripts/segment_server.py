@@ -22,7 +22,10 @@ import sys
 import threading
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+_HERE = Path(__file__).resolve().parent
+_ROOT = _HERE.parents[0]
+sys.path.insert(0, str(_ROOT))
+sys.path.insert(0, str(_HERE))
 import config  # noqa: E402
 
 os.chdir(config.PROJECT_ROOT)
@@ -30,7 +33,8 @@ os.chdir(config.PROJECT_ROOT)
 from flask import Flask, abort, jsonify, request, send_from_directory  # noqa: E402
 from flask_cors import CORS  # noqa: E402
 from PIL import Image  # noqa: E402
-from ultralytics import FastSAM, SAM, YOLO  # noqa: E402
+
+from ensure_models import ensure_models  # noqa: E402
 
 PORT = getattr(config, "SERVER_PORT", 8765)
 PT_DIR = config.PROJECT_ROOT / "models" / "dot-pt"
@@ -65,19 +69,16 @@ def add_cors_headers(resp):
     resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
     return resp
 
-if not config.MODEL_PATH.exists():
-    sys.exit(f"Model not found at {config.MODEL_PATH} -- put your .pt file there first.")
-
-print(f"Loading your model: {config.MODEL_PATH}")
-detect_model = YOLO(str(config.MODEL_PATH))
-if detect_model.task != "segment":
-    sys.exit(f"{config.MODEL_PATH} is a '{detect_model.task}' model, not a segmentation model.")
-
-print("Click-to-segment models load on first use from models/dot-pt or models/dot-engine.\n")
-
 PT_DIR.mkdir(parents=True, exist_ok=True)
 ENGINE_DIR.mkdir(parents=True, exist_ok=True)
 
+detect_model = None
+_boot = {
+    "ready": False,
+    "fatal": None,
+    "message": "Launching app. Please wait",
+}
+_boot_started = False
 _click_models: dict = {}
 _click_lock = threading.Lock()
 
@@ -88,6 +89,49 @@ _labels_dir: Path | None = None
 def get_images_dir() -> Path | None:
     """Only the folder the user picked — never a project default."""
     return _images_dir
+
+
+def _set_boot_message(msg: str) -> None:
+    _boot["message"] = msg
+    print(msg, flush=True)
+
+
+def _boot_models() -> None:
+    global detect_model
+    try:
+        _set_boot_message("Launching app. Please wait")
+        ensure_models(_set_boot_message)
+        if not config.MODEL_PATH.exists():
+            _set_boot_message(
+                "Starting editor. Copy segmentation.pt into models/dot-pt for Auto-Detect."
+            )
+            _boot["ready"] = True
+            return
+        _set_boot_message("Loading Auto-Detect model…")
+        from ultralytics import YOLO  # local import so Flask can bind first
+
+        detect_model = YOLO(str(config.MODEL_PATH))
+        if detect_model.task != "segment":
+            raise RuntimeError(
+                f"{config.MODEL_PATH} is a '{detect_model.task}' model, not a segmentation model."
+            )
+        _set_boot_message("Ready")
+        _boot["ready"] = True
+        print("Click-to-segment models load on first use from models/dot-pt or models/dot-engine.\n")
+    except Exception as e:
+        _boot["fatal"] = str(e)
+        _set_boot_message(f"Failed to start: {e}")
+
+
+def start_boot_thread() -> None:
+    global _boot_started
+    if _boot_started:
+        return
+    _boot_started = True
+    threading.Thread(target=_boot_models, daemon=True, name="segriotate-boot").start()
+
+
+start_boot_thread()
 
 
 def paired_labels_dir(images_folder: Path) -> Path:
@@ -209,6 +253,8 @@ def get_click_model(fmt: str, stem: str):
     with _click_lock:
         if cache_key not in _click_models:
             print(f"Loading {path} for click-fallback...")
+            from ultralytics import FastSAM, SAM, YOLO
+
             path_str = str(path)
             if kind == "fastsam":
                 _click_models[cache_key] = FastSAM(path_str)
@@ -253,9 +299,13 @@ def label_file(stem: str) -> Path:
 @app.route("/health")
 def health():
     return jsonify({
-        "status": "ok",
+        "status": "ok" if not _boot["fatal"] else "error",
         "app": "segriotate",
+        "ready": bool(_boot["ready"]),
+        "message": _boot["message"],
+        "error": _boot["fatal"],
         "detect_model": str(config.MODEL_PATH),
+        "detect_loaded": detect_model is not None,
         "click_models_pt": list_click_models("pt"),
         "click_models_engine": list_click_models("engine"),
         "click_models_loaded": sorted(_click_models),
@@ -278,6 +328,8 @@ def click_models():
 
 @app.route("/")
 def index():
+    if not _boot["ready"]:
+        return send_from_directory(TOOLS_DIR, "launching.html")
     return send_from_directory(TOOLS_DIR, "label_editor.html")
 
 
@@ -381,6 +433,13 @@ def detect():
 
     conf = float(data.get("conf", config.MIN_CONFIDENCE))
 
+    if detect_model is None:
+        if not _boot["ready"]:
+            return jsonify({"error": _boot["message"] or "Launching app. Please wait"}), 503
+        return jsonify({
+            "error": "Auto-Detect model not loaded. Put segmentation.pt in models/dot-pt.",
+        }), 503
+
     try:
         results = detect_model.predict(img, conf=conf, verbose=False)
     except Exception as e:
@@ -410,6 +469,9 @@ def segment():
         img = decode_image(data["image"])
     except Exception as e:
         return jsonify({"error": f"could not decode image: {e}"}), 400
+
+    if not _boot["ready"]:
+        return jsonify({"error": _boot["message"] or "Launching app. Please wait"}), 503
 
     try:
         key, model, spec = get_click_model(

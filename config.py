@@ -22,6 +22,17 @@ MODEL_PATH = PROJECT_ROOT / "models" / "dot-pt" / "segmentation.pt"   # your exi
 IMAGE_DIR = PROJECT_ROOT / "images"                          # the 10,000 raw images
 LABEL_DIR = PROJECT_ROOT / "labels"                          # YOLO .txt annotations (editor writes here)
 
+# Click-to-segment weights. Missing files are downloaded on first launch.
+MODEL_DOWNLOADS = {
+    "FastSAM-s.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/FastSAM-s.pt",
+    "FastSAM-x.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/FastSAM-x.pt",
+    "mobile_sam.pt": "https://github.com/ultralytics/assets/releases/download/v8.4.0/mobile_sam.pt",
+}
+
+# Optional URL that copies your fruit YOLO-seg weights to MODEL_PATH.
+# Leave empty if you place segmentation.pt in models/dot-pt/ yourself.
+SEGMENTATION_DOWNLOAD_URL = ""
+
 OUTPUT_DIR = PROJECT_ROOT / "output"
 AUTO_LABEL_DIR = OUTPUT_DIR / "labels_auto"                  # high-confidence, ready to train on
 REVIEW_DIR = PROJECT_ROOT / "review"                         # everything a human should check in CVAT

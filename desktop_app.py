@@ -22,7 +22,7 @@ from pathlib import Path
 try:
     # WebEngine must be imported before QApplication is created.
     from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSlot
-    from PyQt6.QtGui import QAction
+    from PyQt6.QtGui import QAction, QIcon
     from PyQt6.QtWebChannel import QWebChannel
     from PyQt6.QtWebEngineCore import QWebEngineScript
     from PyQt6.QtWebEngineWidgets import QWebEngineView
@@ -58,23 +58,26 @@ SPLASH_HTML = """<!DOCTYPE html>
     display: flex; align-items: center; justify-content: center;
   }
   .box { text-align: center; max-width: 420px; padding: 32px; }
-  h1 { font-size: 22px; font-weight: 600; letter-spacing: 0.04em; margin: 0 0 8px; }
+  h1 { font-size: 22px; font-weight: 600; letter-spacing: 0.02em; margin: 0 0 8px; }
   p { color: #8b909c; font-size: 14px; line-height: 1.5; margin: 0; }
-  .dot {
-    width: 10px; height: 10px; border-radius: 50%; background: #5eead4;
-    margin: 0 auto 18px; animation: pulse 1.2s ease-in-out infinite;
+  #status { margin-top: 14px; color: #5eead4; font-size: 13px; min-height: 1.4em; }
+  .spinner {
+    width: 42px; height: 42px;
+    border: 3px solid #2a2e36;
+    border-top-color: #5eead4;
+    border-radius: 50%;
+    margin: 0 auto 22px;
+    animation: spin 0.85s linear infinite;
   }
-  @keyframes pulse {
-    0%, 100% { opacity: 0.35; transform: scale(0.9); }
-    50% { opacity: 1; transform: scale(1.15); }
-  }
+  @keyframes spin { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
   <div class="box">
-    <div class="dot"></div>
-    <h1>Segriotate</h1>
-    <p>Loading segmentation models… this can take a minute the first time.</p>
+    <div class="spinner"></div>
+    <h1>Launching app.</h1>
+    <p>Please wait</p>
+    <p id="status">Checking for models…</p>
   </div>
 </body>
 </html>
@@ -84,8 +87,8 @@ FAIL_HTML = """<!DOCTYPE html>
 <html lang="en">
 <body style="background:#14161a;color:#f97362;font-family:sans-serif;padding:40px">
   <h1>Segriotate failed to start</h1>
-  <p>The local server did not become ready. Check the terminal for errors,
-  and make sure port 8765 is free.</p>
+  <p>The local server did not become ready. Check the terminal or <code>segriotate.log</code>.
+  First launch downloads FastSAM / MobileSAM into <code>models/dot-pt/</code> and can take several minutes.</p>
 </body>
 </html>
 """
@@ -112,11 +115,6 @@ def probe_health() -> dict | None:
             return json.loads(resp.read().decode())
     except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError):
         return None
-
-
-def health_ok() -> bool:
-    data = probe_health()
-    return bool(data) and data.get("app") == "segriotate"
 
 
 def run_flask():
@@ -170,7 +168,7 @@ class MainWindow(QMainWindow):
         self._last_labels_dir = str(ROOT / "labels")
         self._last_images_dir = str(ROOT)
 
-        self._deadline = time.time() + 180
+        self._deadline = time.time() + 1200
         if already_running:
             self.view.setUrl(QUrl(BASE + "/"))
         else:
@@ -242,10 +240,27 @@ class MainWindow(QMainWindow):
         return selected[0] if selected else ""
 
     def _check_server(self):
-        if health_ok():
-            self._poll.stop()
-            self.view.setUrl(QUrl(BASE + "/"))
-            return
+        data = probe_health()
+        if data and data.get("app") == "segriotate":
+            msg = data.get("message") or "Launching app. Please wait"
+            self.view.page().runJavaScript(
+                "var e=document.getElementById('status');"
+                f"if(e) e.textContent={json.dumps(msg)};"
+            )
+            if data.get("error"):
+                err = data.get("error")
+                self._poll.stop()
+                self.view.setHtml(
+                    FAIL_HTML.replace(
+                        "The local server did not become ready.",
+                        str(err),
+                    )
+                )
+                return
+            if data.get("ready") is True:
+                self._poll.stop()
+                self.view.setUrl(QUrl(BASE + "/"))
+                return
         if time.time() > self._deadline:
             self._poll.stop()
             self.view.setHtml(FAIL_HTML)
@@ -319,16 +334,41 @@ class MainWindow(QMainWindow):
         self._notify_labels_dir(data["dir"])
 
 
+def _windows_app_id() -> None:
+    """So the taskbar uses Segriotate.ico instead of the Python icon."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "com.segritech.segriotate"
+        )
+    except Exception:
+        pass
+
+
+def _app_icon() -> QIcon:
+    ico = ROOT / "Segriotate.ico"
+    png = ROOT / "Segriotate.app" / "Contents" / "Resources" / "segriotate_icon_1024.png"
+    if ico.is_file():
+        return QIcon(str(ico))
+    if png.is_file():
+        return QIcon(str(png))
+    return QIcon()
+
+
 def main():
+    _windows_app_id()
     already = probe_health()
     if already and already.get("app") != "segriotate":
         sys.exit(
             f"Port {PORT} is already in use (probably an old python scripts/segment_server.py).\n"
             "Stop that process with Ctrl+C, then start Segriotate again."
         )
-    already_running = bool(already) and already.get("app") == "segriotate"
-    if not already_running:
+    flask_up = bool(already) and already.get("app") == "segriotate"
+    if not flask_up:
         threading.Thread(target=run_flask, daemon=True).start()
+    editor_ready = flask_up and already.get("ready") is True
 
     try:
         QApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
@@ -336,7 +376,12 @@ def main():
         pass
     app = QApplication(sys.argv)
     app.setApplicationName("Segriotate")
-    window = MainWindow(already_running)
+    icon = _app_icon()
+    if not icon.isNull():
+        app.setWindowIcon(icon)
+    window = MainWindow(editor_ready)
+    if not icon.isNull():
+        window.setWindowIcon(icon)
     window.show()
     sys.exit(app.exec())
 
