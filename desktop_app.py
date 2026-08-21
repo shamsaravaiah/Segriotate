@@ -88,7 +88,8 @@ FAIL_HTML = """<!DOCTYPE html>
 <body style="background:#14161a;color:#f97362;font-family:sans-serif;padding:40px">
   <h1>Segriotate failed to start</h1>
   <p>The local server did not become ready. Check the terminal or <code>segriotate.log</code>.
-  First launch downloads FastSAM / MobileSAM into <code>models/dot-pt/</code> and can take several minutes.</p>
+  First launch downloads FastSAM / MobileSAM into <code>models/dot-pt/</code>
+  and can build TensorRT engines from <code>models/source/</code>. That can take several minutes.</p>
 </body>
 </html>
 """
@@ -168,7 +169,7 @@ class MainWindow(QMainWindow):
         self._last_labels_dir = str(ROOT / "labels")
         self._last_images_dir = str(ROOT)
 
-        self._deadline = time.time() + 1200
+        self._deadline = time.time() + 3600
         if already_running:
             self.view.setUrl(QUrl(BASE + "/"))
         else:

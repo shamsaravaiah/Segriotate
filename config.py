@@ -19,6 +19,9 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 
 MODEL_PATH = PROJECT_ROOT / "models" / "dot-pt" / "segmentation.pt"   # your existing YOLO-seg model
+MODEL_PT_DIR = PROJECT_ROOT / "models" / "dot-pt"
+MODEL_ENGINE_DIR = PROJECT_ROOT / "models" / "dot-engine"
+MODEL_SOURCE_DIR = PROJECT_ROOT / "models" / "source"        # drop new .pt here; engines built on device
 IMAGE_DIR = PROJECT_ROOT / "images"                          # the 10,000 raw images
 LABEL_DIR = PROJECT_ROOT / "labels"                          # YOLO .txt annotations (editor writes here)
 
@@ -40,6 +43,14 @@ REVIEW_DIR = PROJECT_ROOT / "review"                         # everything a huma
 DATASET_DIR = PROJECT_ROOT / "dataset"                       # final train/val/test split
 
 SERVER_PORT = 8765                                           # local UI + inference server
+
+# TensorRT engines are built on the deployed machine from models/source/*.pt.
+# Mac/PC without TensorRT skip this and keep using .pt files.
+ENGINE_BATCH = 1          # live editor sends one image
+ENGINE_IMGSZ = 640
+ENGINE_WORKSPACE_GB = 4   # raise on a desktop GPU if the build fails
+ENGINE_USE_FP16 = True
+ENGINE_USE_SPARSE = True
 
 # ---------------------------------------------------------------------------
 # Inference

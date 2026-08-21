@@ -69,8 +69,10 @@ def planned_downloads() -> list[tuple[Path, str]]:
 def ensure_models(on_status=None) -> None:
     pt_dir = config.PROJECT_ROOT / "models" / "dot-pt"
     engine_dir = config.PROJECT_ROOT / "models" / "dot-engine"
+    source_dir = Path(getattr(config, "MODEL_SOURCE_DIR", config.PROJECT_ROOT / "models" / "source"))
     pt_dir.mkdir(parents=True, exist_ok=True)
     engine_dir.mkdir(parents=True, exist_ok=True)
+    source_dir.mkdir(parents=True, exist_ok=True)
 
     missing = [(path, url) for path, url in planned_downloads() if not _complete(path)]
     if not missing:

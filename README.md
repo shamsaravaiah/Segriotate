@@ -39,7 +39,7 @@ local Flask server starts on http://127.0.0.1:8765
 your YOLO-seg model loads from models/dot-pt/segmentation.pt
      |
      v
-Open Images…  →  labels saved to labels/<folder-name>-labels/
+Open Images…  →  labels saved to labels/<folder-name>_labels/
      |
      +--> Auto-Detect (ON)     →  polygons pre-filled
      |
@@ -115,12 +115,13 @@ exist are skipped.
 
 ```
 models/
-  dot-pt/          ← PyTorch .pt files (Mac, PC, Orin)
+  source/          ← drop new YOLO .pt files here (updates)
+  dot-pt/          ← PyTorch .pt files the editor loads (Mac, PC, Orin)
     segmentation.pt
     FastSAM-s.pt
     FastSAM-x.pt      (optional, larger / slower)
     mobile_sam.pt     (optional)
-  dot-engine/      ← TensorRT .engine files (export on the Orin only)
+  dot-engine/      ← TensorRT .engine files (built on this machine)
 ```
 
 ### Auto-Detect (required for pre-filled polygons)
@@ -160,11 +161,22 @@ In the editor, pick **Format** (`.pt` or `.engine`) then **Model**. Click
 models are whatever files are in those folders; extra `.pt` files you add
 will show up too.
 
-### TensorRT (Orin only)
+### TensorRT (built on the deployed machine)
 
-There is no download for `.engine` files. Export them **on the Jetson** from
-the `.pt` weights (engines are tied to that GPU + JetPack). Copy the result
-into `models/dot-engine/` with matching stems, e.g. `FastSAM-s.engine`.
+Put YOLO `.pt` files in `models/source/` (for example `segmentation.pt`). On
+startup, if TensorRT is installed (Orin / a NVIDIA PC), the app:
+
+1. Copies each `source/*.pt` into `models/dot-pt/` if it is new.
+2. Builds `models/dot-engine/<name>.engine` when that engine is missing or
+   older than the `.pt`.
+3. Skips engines that are already up to date.
+
+Mac and PCs without TensorRT skip the build and keep using `.pt`. A failed
+build of one file does not stop the editor.
+
+Do not copy `.engine` files between machines. FastSAM / MobileSAM are not
+converted unless you place them in `models/source/` yourself (YOLO export
+only). First engine build can take several minutes.
 
 ### Training start weights (optional)
 
@@ -180,8 +192,8 @@ Name is set in `config.py` as `TRAIN_BASE_MODEL`.
 ## 3. Using the editor
 
 1. Start the app. Wait until the editor appears (not the splash screen).
-2. **Open Images…** and pick a folder in the project (for example `img-1`).
-   Labels go to `labels/img-1-labels/` automatically. Use **Labels Folder…**
+2. **Open Images…** and pick a folder (for example `batch001`).
+   Labels go to `labels/batch001_labels/` automatically. Use **Labels Folder…**
    only to override that.
 3. For each image:
    - **Auto-Detect: ON** (default) — your model pre-fills every object it
@@ -277,7 +289,7 @@ Then run `03_split_dataset.py`.
 
 `03_split_dataset.py` looks for `.txt` files in `labels/` first, then falls
 back to `output/labels_auto/`. If you labelled in the live editor, copy or
-point it at `labels/<folder>-labels/` as needed.
+point it at `labels/<folder>_labels/` as needed.
 
 ## 6. Notes
 
@@ -287,6 +299,7 @@ point it at `labels/<folder>-labels/` as needed.
   model.
 - `CLASS_MAP` drops any class id not listed — add an identity entry
   (e.g. `4: 4`) for classes you want to keep unchanged.
-- `.pt` files run on Mac / PC / Orin. `.engine` files must be built on the
-  Orin; do not copy an engine from another machine.
+- `.pt` files run on Mac / PC / Orin. `.engine` files are built on the
+  deployed GPU from `models/source/`; do not copy an engine from another
+  machine.
 - No data leaves your machine unless you self-host CVAT elsewhere.

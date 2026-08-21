@@ -35,6 +35,7 @@ from flask_cors import CORS  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from ensure_models import ensure_models  # noqa: E402
+from build_engines import ensure_engines  # noqa: E402
 
 PORT = getattr(config, "SERVER_PORT", 8765)
 PT_DIR = config.PROJECT_ROOT / "models" / "dot-pt"
@@ -101,6 +102,7 @@ def _boot_models() -> None:
     try:
         _set_boot_message("Launching app. Please wait")
         ensure_models(_set_boot_message)
+        ensure_engines(_set_boot_message)
         if not config.MODEL_PATH.exists():
             _set_boot_message(
                 "Starting editor. Copy segmentation.pt into models/dot-pt for Auto-Detect."
@@ -135,11 +137,17 @@ start_boot_thread()
 
 
 def paired_labels_dir(images_folder: Path) -> Path:
-    """labels/<folder-name>-labels under the project root."""
+    """labels/<folder-name>_labels under the project root (e.g. batch001 → labels/batch001_labels)."""
     name = images_folder.name.strip() or "images"
     if name in {".", ".."}:
         name = "images"
-    return (config.PROJECT_ROOT / "labels" / f"{name}-labels").resolve()
+    labels_root = config.PROJECT_ROOT / "labels"
+    dest = (labels_root / f"{name}_labels").resolve()
+    legacy = (labels_root / f"{name}-labels").resolve()
+    # Keep using an existing hyphen folder from older app versions.
+    if not dest.exists() and legacy.is_dir():
+        return legacy
+    return dest
 
 
 def set_images_dir(path: str | Path) -> Path:
@@ -266,15 +274,40 @@ def get_click_model(fmt: str, stem: str):
         return cache_key, _click_models[cache_key], spec
 
 
+def _has_mask(results) -> bool:
+    result = results[0] if results else None
+    return result is not None and result.masks is not None and len(result.masks) > 0
+
+
 def run_click_predict(kind: str, model, img, px: float, py: float, conf: float):
-    """Point-prompt inference. SAM accepts two point-list shapes; try both."""
+    """Point-prompt inference. MobileSAM/SAM want a flat [x, y] for one click."""
     if kind == "fastsam":
         return model(img, points=[[px, py]], labels=[1], conf=conf, verbose=False)
-    results = model.predict(img, points=[[px, py]], labels=[1], verbose=False)
-    result = results[0] if results else None
-    if result is None or result.masks is None or len(result.masks) == 0:
-        results = model.predict(img, points=[[[px, py]]], labels=[[1]], verbose=False)
-    return results
+
+    import numpy as np
+
+    source = np.asarray(img)
+    x, y = float(px), float(py)
+    attempts = (
+        {"points": [x, y], "labels": [1]},
+        {"points": [[x, y]], "labels": [1]},
+        {"points": [[[x, y]]], "labels": [[1]]},
+    )
+    last = None
+    last_err = None
+    for kwargs in attempts:
+        try:
+            last = model.predict(source, verbose=False, **kwargs)
+        except Exception as e:
+            last_err = e
+            continue
+        if _has_mask(last):
+            return last
+    if last is not None:
+        return last
+    if last_err is not None:
+        raise last_err
+    return last
 
 
 def decode_image(img_b64: str) -> Image.Image:
@@ -491,8 +524,8 @@ def segment():
     except Exception as e:
         return jsonify({"error": f"inference failed: {e}"}), 500
 
-    result = results[0]
-    if result.masks is None or len(result.masks) == 0:
+    result = results[0] if results else None
+    if result is None or result.masks is None or len(result.masks) == 0:
         return jsonify({"points": [], "model": key, "label": spec["label"]})
 
     polygon = result.masks.xyn[0].tolist()
