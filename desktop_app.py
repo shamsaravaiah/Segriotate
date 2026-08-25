@@ -21,10 +21,14 @@ from pathlib import Path
 
 try:
     # WebEngine must be imported before QApplication is created.
-    from PyQt6.QtCore import QObject, Qt, QTimer, QUrl, pyqtSlot
+    from PyQt6.QtCore import QObject, QStandardPaths, Qt, QTimer, QUrl, pyqtSlot
     from PyQt6.QtGui import QAction, QIcon
     from PyQt6.QtWebChannel import QWebChannel
-    from PyQt6.QtWebEngineCore import QWebEngineScript
+    from PyQt6.QtWebEngineCore import (
+        QWebEnginePage,
+        QWebEngineProfile,
+        QWebEngineScript,
+    )
     from PyQt6.QtWebEngineWidgets import QWebEngineView
     from PyQt6.QtWidgets import (
         QApplication,
@@ -110,6 +114,16 @@ BRIDGE_JS = """
 """
 
 
+def web_storage_dir() -> Path:
+    base = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.AppDataLocation
+    )
+    root = Path(base) if base else ROOT / ".segriotate"
+    path = root / "web"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def probe_health() -> dict | None:
     try:
         with urllib.request.urlopen(f"{BASE}/health", timeout=2) as resp:
@@ -156,6 +170,19 @@ class MainWindow(QMainWindow):
         self.view = QWebEngineView(self)
         self.view.setStyleSheet("background: #14161a;")
         self.setCentralWidget(self.view)
+
+        # Qt's default profile is off-the-record, so localStorage (where the
+        # editor caches its class profiles) is discarded on exit. A named
+        # profile with a storage path keeps it on disk. The profile is parented
+        # to the application so that it outlives the page it backs.
+        storage = web_storage_dir()
+        self.profile = QWebEngineProfile("segriotate", QApplication.instance())
+        self.profile.setPersistentStoragePath(str(storage))
+        self.profile.setCachePath(str(storage / "cache"))
+        self.profile.setPersistentCookiesPolicy(
+            QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
+        )
+        self.view.setPage(QWebEnginePage(self.profile, self))
 
         self.bridge = Bridge(self)
         self.channel = QWebChannel(self.view.page())

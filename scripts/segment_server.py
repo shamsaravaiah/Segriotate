@@ -17,6 +17,7 @@ Usage (desktop):
 
 import base64
 import io
+import json
 import os
 import sys
 import threading
@@ -51,6 +52,10 @@ CLICK_LABELS = {
 TOOLS_DIR = config.PROJECT_ROOT / "tools"
 VENDOR_DIR = TOOLS_DIR / "vendor"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+LABEL_SIDECAR_STEMS = {"class_profile", "classes"}
+CLASS_PROFILES_PATH = getattr(
+    config, "CLASS_PROFILES_PATH", config.PROJECT_ROOT / "class_profiles.json"
+)
 
 app = Flask(__name__)
 CORS(
@@ -181,11 +186,14 @@ def ensure_label_files() -> int:
     """Give every image an empty .txt so labels map 1:1 onto the images."""
     if get_images_dir() is None or _labels_dir is None:
         return 0
-    existing = {p.stem for p in _labels_dir.glob("*.txt")}
+    existing = {
+        p.stem for p in _labels_dir.glob("*.txt")
+        if p.stem not in LABEL_SIDECAR_STEMS
+    }
     created = 0
     for item in list_image_files():
         stem = item["stem"]
-        if stem in existing:
+        if stem in existing or stem in LABEL_SIDECAR_STEMS:
             continue
         try:
             (_labels_dir / f"{stem}.txt").write_text("", encoding="utf-8")
@@ -210,6 +218,63 @@ def list_image_files() -> list[dict]:
         if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS:
             files.append({"name": p.name, "stem": p.stem})
     return files
+
+
+def empty_class_profiles() -> dict:
+    return {"version": 1, "active": "", "profiles": {}}
+
+
+def read_class_profiles() -> dict:
+    """Load class_profiles.json, treating anything unreadable as 'no profiles'."""
+    try:
+        data = json.loads(CLASS_PROFILES_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return empty_class_profiles()
+    if not isinstance(data, dict) or not isinstance(data.get("profiles"), dict):
+        return empty_class_profiles()
+    return data
+
+
+def write_class_profiles(data: dict) -> None:
+    """Write via a temp file so an interrupted save cannot truncate the profiles."""
+    CLASS_PROFILES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CLASS_PROFILES_PATH.with_name(CLASS_PROFILES_PATH.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, CLASS_PROFILES_PATH)
+
+
+def clean_class_profile(value) -> dict | None:
+    """Normalise one profile, or None if it has no usable class list."""
+    if not isinstance(value, dict) or not isinstance(value.get("classes"), list):
+        return None
+    names = [str(c) for c in value["classes"]]
+    raw_groups = value.get("classGroup")
+    groups = raw_groups if isinstance(raw_groups, list) else []
+    raw_order = value.get("groupOrder")
+    order = [str(g) for g in raw_order if g] if isinstance(raw_order, list) else []
+    return {
+        "classes": names,
+        "classGroup": [
+            str(groups[i]) if i < len(groups) and groups[i] else "Custom"
+            for i in range(len(names))
+        ],
+        "groupOrder": order,
+    }
+
+
+def write_label_sidecars(profile_name: str, class_names: list[str]) -> Path:
+    """Write class_profile.txt and classes.txt into the current labels folder."""
+    folder = get_labels_dir()
+    if folder is None:
+        raise ValueError("no labels folder selected")
+    name = str(profile_name or "").strip()
+    if not name:
+        raise ValueError("profile name is empty")
+    names = [str(c).replace("\n", " ").replace("\r", "") for c in class_names]
+    (folder / "class_profile.txt").write_text(name + "\n", encoding="utf-8")
+    classes_body = "".join(f"{c}\n" for c in names)
+    (folder / "classes.txt").write_text(classes_body, encoding="utf-8")
+    return folder
 
 
 def remap_class(old_class_id: int):
@@ -431,6 +496,59 @@ def project_labels_dir():
     except (TypeError, ValueError, OSError) as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"ok": True, "dir": str(folder)})
+
+
+@app.route("/project/class-profiles", methods=["GET", "POST", "PUT", "OPTIONS"])
+def project_class_profiles():
+    """Named class lists the editor's left panel saves and reloads."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if request.method == "GET":
+        return jsonify({"path": str(CLASS_PROFILES_PATH), **read_class_profiles()})
+
+    payload = request.get_json(force=True, silent=True) or {}
+    incoming = payload.get("profiles")
+    if not isinstance(incoming, dict):
+        return jsonify({"error": "profiles must be an object"}), 400
+    profiles = {}
+    for name, value in incoming.items():
+        label = str(name).strip()
+        cleaned = clean_class_profile(value)
+        if label and cleaned is not None:
+            profiles[label] = cleaned
+    if not profiles:
+        return jsonify({"error": "profiles must not be empty"}), 400
+    active = str(payload.get("active") or "").strip()
+    if active not in profiles:
+        active = next(iter(profiles), "")
+    doc = {"version": 1, "active": active, "profiles": profiles}
+    try:
+        write_class_profiles(doc)
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
+    return jsonify({"ok": True, "path": str(CLASS_PROFILES_PATH), **doc})
+
+
+@app.route("/project/labels-taxonomy", methods=["POST", "OPTIONS"])
+def project_labels_taxonomy():
+    """Sidecar files in the labels folder: which profile, and id → name."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    payload = request.get_json(force=True, silent=True) or {}
+    profile = str(payload.get("profile") or "").strip()
+    classes = payload.get("classes")
+    if not isinstance(classes, list):
+        classes = []
+    try:
+        folder = write_label_sidecars(profile, classes)
+    except (TypeError, ValueError, OSError) as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({
+        "ok": True,
+        "dir": str(folder),
+        "profile": profile,
+        "classes": [str(c) for c in classes],
+    })
 
 
 @app.route("/media/<path:filename>")

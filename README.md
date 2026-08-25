@@ -234,7 +234,29 @@ At minimum, check/set:
 - `MIN_CONFIDENCE` / `AUTO_ACCEPT_CONFIDENCE` — how strict auto-accept is
   (used by the batch script; the live editor uses `MIN_CONFIDENCE` for detect)
 - `FORCE_CLASS_ID` or `CLASS_MAP` — how old class ids map to your new classes
-- `CLASS_NAMES` — names shown in the editor and written into `data.yaml`
+- `CLASS_NAMES` — names written into `data.yaml` by `03_split_dataset.py`
+- `CLASS_PROFILES_PATH` — where the editor saves its class profiles
+
+### Class profiles
+
+The class list in the editor's left panel can be saved as a named profile in
+`class_profiles.json`. **Load profile** at the top of Classes picks a saved
+list. After you build types and classes, type a name under **Save this list as
+a profile** and click **Save profile** — that name appears in the dropdown next
+to Default and is still there after you relaunch.
+
+The file is plain JSON in the project root — back it up, commit it, or copy it
+to another machine.
+
+When a labels folder is open, the editor also writes two sidecars there (YOLO
+training ignores them because they do not match an image name):
+
+- `class_profile.txt` — the profile name as shown in the app (`Default`, `test`, …)
+- `classes.txt` — one class name per line; line 1 is id `0`, line 2 is id `1`, …
+
+> Class ids are positions in the list. If you replace the class list after
+> labelling images, ids get reused and existing `.txt` files will read back
+> under the new names. Start a new labels folder when you change taxonomy.
 
 Default subclasses (ids written to YOLO `.txt`):
 

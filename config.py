@@ -73,6 +73,10 @@ MAX_INSTANCES_BEFORE_REVIEW = 15
 # Class handling
 # ---------------------------------------------------------------------------
 
+# Named class profiles saved from the editor's left panel. Plain JSON, so it
+# can be backed up, committed, or copied to another machine.
+CLASS_PROFILES_PATH = PROJECT_ROOT / "class_profiles.json"
+
 # Option A: collapse every detection into a single class (e.g. your existing
 # model is only being used as a generic "mask generator"). Set to an int to
 # use this, or None to disable.

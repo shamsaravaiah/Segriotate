@@ -36,7 +36,10 @@ def main():
     if not label_dir.exists():
         sys.exit(f"No labels found in {config.LABEL_DIR} or {config.AUTO_LABEL_DIR}.")
 
-    labelled_stems = {p.stem for p in label_dir.glob("*.txt")}
+    labelled_stems = {
+        p.stem for p in label_dir.glob("*.txt")
+        if p.stem not in {"classes", "class_profile"}
+    }
     images = [
         p for p in config.IMAGE_DIR.rglob("*")
         if p.suffix.lower() in IMAGE_EXTENSIONS and p.stem in labelled_stems
