@@ -89,7 +89,7 @@ FAIL_HTML = """<!DOCTYPE html>
   <h1>Segriotate failed to start</h1>
   <p>The local server did not become ready. Check the terminal or <code>segriotate.log</code>.
   First launch downloads FastSAM / MobileSAM into <code>models/dot-pt/</code>
-  and can build TensorRT engines from <code>models/source/</code>. That can take several minutes.</p>
+  and can build TensorRT engines from those <code>.pt</code> files. That can take several minutes.</p>
 </body>
 </html>
 """

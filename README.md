@@ -115,13 +115,13 @@ exist are skipped.
 
 ```
 models/
-  source/          ← drop new YOLO .pt files here (updates)
+  source/          ← optional drop folder (copied into dot-pt)
   dot-pt/          ← PyTorch .pt files the editor loads (Mac, PC, Orin)
     segmentation.pt
     FastSAM-s.pt
     FastSAM-x.pt      (optional, larger / slower)
     mobile_sam.pt     (optional)
-  dot-engine/      ← TensorRT .engine files (built on this machine)
+  dot-engine/      ← TensorRT .engine files built from every .pt in dot-pt
 ```
 
 ### Auto-Detect (required for pre-filled polygons)
@@ -163,20 +163,18 @@ will show up too.
 
 ### TensorRT (built on the deployed machine)
 
-Put YOLO `.pt` files in `models/source/` (for example `segmentation.pt`). On
-startup, if TensorRT is installed (Orin / a NVIDIA PC), the app:
+On startup, if TensorRT is installed (Orin / an NVIDIA PC), the app builds
+an engine for **every** `.pt` in `models/dot-pt/`:
 
-1. Copies each `source/*.pt` into `models/dot-pt/` if it is new.
-2. Builds `models/dot-engine/<name>.engine` when that engine is missing or
-   older than the `.pt`.
-3. Skips engines that are already up to date.
+`models/dot-pt/foo.pt` → `models/dot-engine/foo.engine`
 
-Mac and PCs without TensorRT skip the build and keep using `.pt`. A failed
-build of one file does not stop the editor.
+It skips an engine that already exists and is newer than the `.pt`. A failed
+build of one file (common for FastSAM / MobileSAM; they are not YOLO export)
+does not stop the editor. Mac and PCs without TensorRT skip the build and
+keep using `.pt`.
 
-Do not copy `.engine` files between machines. FastSAM / MobileSAM are not
-converted unless you place them in `models/source/` yourself (YOLO export
-only). First engine build can take several minutes.
+Do not copy `.engine` files between machines. First engine build can take
+several minutes per model.
 
 ### Training start weights (optional)
 
@@ -300,6 +298,6 @@ point it at `labels/<folder>_labels/` as needed.
 - `CLASS_MAP` drops any class id not listed — add an identity entry
   (e.g. `4: 4`) for classes you want to keep unchanged.
 - `.pt` files run on Mac / PC / Orin. `.engine` files are built on the
-  deployed GPU from `models/source/`; do not copy an engine from another
+  deployed GPU from `models/dot-pt/`; do not copy an engine from another
   machine.
 - No data leaves your machine unless you self-host CVAT elsewhere.

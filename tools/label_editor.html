@@ -991,12 +991,16 @@
     if (text == null && state.fallbackLabelBlobs[f.stem] !== undefined) {
       text = state.fallbackLabelBlobs[f.stem];
     }
-    if (text != null) {
+    // An empty .txt is a placeholder for an image nobody has looked at yet,
+    // so it still goes through auto-detect.
+    const hasLabels = text != null && text.trim() !== "";
+    if (hasLabels) {
       state.polygons = parseYoloSeg(text);
     } else if (state.autoDetect) {
       await autoDetectCurrentImage(gen, stem);
     }
     if (isStale(gen, stem)) return;
+    if (!hasLabels) markDirty();
     renderClassList();
   }
 
@@ -1024,7 +1028,6 @@
         [o.classId],
         o.points.map(([x, y]) => [clamp01(x), clamp01(y)]),
       ));
-      if (state.polygons.length > 0) markDirty();
       setSegmentStatus(state.polygons.length
         ? `${state.polygons.length} object(s) auto-detected`
         : "no objects detected — draw manually or use click-to-segment");

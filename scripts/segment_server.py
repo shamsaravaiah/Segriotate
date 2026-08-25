@@ -173,7 +173,28 @@ def set_labels_dir(path: str | Path) -> Path:
     if not folder.is_dir():
         raise ValueError(f"not a directory: {folder}")
     _labels_dir = folder
+    ensure_label_files()
     return folder
+
+
+def ensure_label_files() -> int:
+    """Give every image an empty .txt so labels map 1:1 onto the images."""
+    if get_images_dir() is None or _labels_dir is None:
+        return 0
+    existing = {p.stem for p in _labels_dir.glob("*.txt")}
+    created = 0
+    for item in list_image_files():
+        stem = item["stem"]
+        if stem in existing:
+            continue
+        try:
+            (_labels_dir / f"{stem}.txt").write_text("", encoding="utf-8")
+        except OSError:
+            continue
+        created += 1
+    if created:
+        print(f"Created {created} empty labels in {_labels_dir}", flush=True)
+    return created
 
 
 def effective_labels_dir() -> Path:

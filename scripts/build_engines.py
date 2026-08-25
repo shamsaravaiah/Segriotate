@@ -1,4 +1,4 @@
-"""Build TensorRT .engine files on the deployed machine from models/source/*.pt."""
+"""Build TensorRT .engine files on the deployed machine from models/dot-pt/*.pt."""
 
 from __future__ import annotations
 
@@ -176,7 +176,7 @@ def _convert_one(pt_path: Path, engine_path: Path, on_status) -> None:
 
 
 def ensure_engines(on_status=None) -> None:
-    """Copy models/source/*.pt into dot-pt, and build missing/outdated engines."""
+    """Build models/dot-engine/<stem>.engine for every .pt in models/dot-pt/."""
     source = _source_dir()
     pt_dir = _pt_dir()
     engine_dir = _engine_dir()
@@ -184,12 +184,16 @@ def ensure_engines(on_status=None) -> None:
     pt_dir.mkdir(parents=True, exist_ok=True)
     engine_dir.mkdir(parents=True, exist_ok=True)
 
-    pts = sorted(p for p in source.glob("*.pt") if p.is_file() and p.stat().st_size > MIN_BYTES)
+    for src in source.glob("*.pt"):
+        if src.is_file() and src.stat().st_size > MIN_BYTES:
+            _copy_pt_into_runtime(src, pt_dir / src.name)
+
+    pts = sorted(
+        p for p in pt_dir.glob("*.pt")
+        if p.is_file() and p.stat().st_size > MIN_BYTES
+    )
     if not pts:
         return
-
-    for pt_path in pts:
-        _copy_pt_into_runtime(pt_path, pt_dir / pt_path.name)
 
     if not tensorrt_available():
         _status(on_status, "TensorRT not installed — using .pt files (no .engine build).")
