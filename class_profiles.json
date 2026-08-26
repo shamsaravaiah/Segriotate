@@ -38,17 +38,33 @@
     },
     "testing-profile": {
       "classes": [
-        "a1",
-        "a2",
-        "a3"
+        "Export Premium",
+        "Prime Export",
+        "Domestic Premium",
+        "Standard Retail",
+        "Everyday Retail",
+        "Commercial",
+        "Value",
+        "Processing",
+        "Reject"
       ],
       "classGroup": [
-        "test class",
-        "test class",
-        "test class"
+        "Export Quality (EXP)",
+        "Export Quality (EXP)",
+        "Domestic Premium (DOM)",
+        "Retail Standard (RET)",
+        "Retail Standard (RET)",
+        "Commercial (COM)",
+        "Commercial (COM)",
+        "Non-Market (NMR)",
+        "Non-Market (NMR)"
       ],
       "groupOrder": [
-        "test class",
+        "Export Quality (EXP)",
+        "Domestic Premium (DOM)",
+        "Retail Standard (RET)",
+        "Commercial (COM)",
+        "Non-Market (NMR)",
         "Custom"
       ]
     }

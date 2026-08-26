@@ -5,7 +5,9 @@ Local inference + UI server for Segriotate.
 2. /detect    -- YOLO segmentation.pt on the current image
 3. /segment   -- click-to-segment fallback (.pt or .engine: FastSAM, MobileSAM, …)
 4. /label     -- read/write YOLO .txt files in labels/
-5. /media     -- serve images from the chosen images folder
+5. /project/label-stats -- mask/image counts per class in the labels folder
+6. /project/split-dataset -- copy train/val/test (+ CSV) from the open folders
+7. /media     -- serve images from the chosen images folder
 
 Usage (browser):
     python scripts/segment_server.py
@@ -37,6 +39,7 @@ from PIL import Image  # noqa: E402
 
 from ensure_models import ensure_models  # noqa: E402
 from build_engines import ensure_engines  # noqa: E402
+from split_yolo_dataset import split_dataset  # noqa: E402
 
 PORT = getattr(config, "SERVER_PORT", 8765)
 PT_DIR = config.PROJECT_ROOT / "models" / "dot-pt"
@@ -218,6 +221,63 @@ def list_image_files() -> list[dict]:
         if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS:
             files.append({"name": p.name, "stem": p.stem})
     return files
+
+
+def _count_yolo_file(path: Path) -> tuple[dict[int, int], set[int]]:
+    """Return (masks_per_class, class ids present) for one YOLO .txt."""
+    masks: dict[int, int] = {}
+    present: set[int] = set()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return masks, present
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        token = line.split(None, 1)[0]
+        try:
+            cid = int(float(token))
+        except ValueError:
+            continue
+        if cid < 0:
+            continue
+        masks[cid] = masks.get(cid, 0) + 1
+        present.add(cid)
+    return masks, present
+
+
+def label_stats() -> dict:
+    """Mask and image counts per class for the open image folder's labels."""
+    folder = get_labels_dir()
+    stems = [item["stem"] for item in list_image_files()]
+    if not stems and folder is not None and folder.is_dir():
+        stems = sorted(
+            p.stem for p in folder.glob("*.txt") if p.stem not in LABEL_SIDECAR_STEMS
+        )
+    masks: dict[int, int] = {}
+    images: dict[int, int] = {}
+    labelled = 0
+    if folder is not None and folder.is_dir():
+        for stem in stems:
+            path = folder / f"{stem}.txt"
+            if not path.is_file():
+                continue
+            file_masks, present = _count_yolo_file(path)
+            if not present:
+                continue
+            labelled += 1
+            for cid, n in file_masks.items():
+                masks[cid] = masks.get(cid, 0) + n
+            for cid in present:
+                images[cid] = images.get(cid, 0) + 1
+    return {
+        "ok": True,
+        "masks": {str(k): v for k, v in sorted(masks.items())},
+        "images": {str(k): v for k, v in sorted(images.items())},
+        "images_total": len(stems),
+        "images_labelled": labelled,
+    }
 
 
 def empty_class_profiles() -> dict:
@@ -561,6 +621,44 @@ def media(filename):
     if path.parent != folder.resolve() or not path.is_file():
         abort(404)
     return send_from_directory(folder, name)
+
+
+@app.route("/project/split-dataset", methods=["POST", "OPTIONS"])
+def project_split_dataset():
+    """Copy the open images + labels into a user-chosen train/val/test folder."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    images = get_images_dir()
+    labels = get_labels_dir()
+    if images is None:
+        return jsonify({"error": "open an images folder first"}), 400
+    if labels is None:
+        return jsonify({"error": "no labels folder is set"}), 400
+    data = request.get_json(force=True, silent=True) or {}
+    out = (data.get("out") or "").strip()
+    if not out:
+        return jsonify({"error": "choose a dataset folder"}), 400
+    try:
+        train = float(data.get("train", 0.7))
+        val = float(data.get("val", 0.2))
+        test = float(data.get("test", 0.1))
+        seed = int(data.get("seed", 42))
+    except (TypeError, ValueError):
+        return jsonify({"error": "train, val, test, and seed must be numbers"}), 400
+    try:
+        result = split_dataset(
+            images, labels, out, train=train, val=val, test=test, seed=seed
+        )
+    except (ValueError, OSError) as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(result)
+
+
+@app.route("/project/label-stats", methods=["GET", "OPTIONS"])
+def project_label_stats():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    return jsonify(label_stats())
 
 
 @app.route("/label", methods=["GET", "POST", "PUT", "OPTIONS"])

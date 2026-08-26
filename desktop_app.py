@@ -158,6 +158,10 @@ class Bridge(QObject):
     def pick_labels_folder(self) -> str:
         return self._window.pick_labels_folder_json()
 
+    @pyqtSlot(result=str)
+    def pick_dataset_folder(self) -> str:
+        return self._window.pick_dataset_folder_json()
+
 
 class MainWindow(QMainWindow):
     def __init__(self, already_running: bool):
@@ -195,6 +199,7 @@ class MainWindow(QMainWindow):
         self._labels_chosen = False
         self._last_labels_dir = str(ROOT / "labels")
         self._last_images_dir = str(ROOT)
+        self._last_dataset_dir = str(ROOT)
 
         self._deadline = time.time() + 3600
         if already_running:
@@ -316,6 +321,15 @@ class MainWindow(QMainWindow):
         })
 
     def open_images_from_menu(self):
+        self.view.page().runJavaScript(
+            "typeof window.confirmClassesForAnnotation === 'function' "
+            "? window.confirmClassesForAnnotation() : true",
+            self._after_class_confirm_open_images,
+        )
+
+    def _after_class_confirm_open_images(self, ok):
+        if not ok:
+            return
         data = json.loads(self.pick_images_folder_json())
         if not data.get("ok"):
             if data.get("error"):
@@ -325,7 +339,7 @@ class MainWindow(QMainWindow):
         dir_js = json.dumps(data["dir"])
         self.view.page().runJavaScript(
             "if (window.applyServerFileList) {"
-            f" window.applyServerFileList({files_js}, {dir_js});"
+            f" window.applyServerFileList({files_js}, {dir_js}, true);"
             "}"
         )
         if data.get("labels_dir"):
@@ -344,6 +358,16 @@ class MainWindow(QMainWindow):
         self._labels_chosen = True
         self._last_labels_dir = str(saved)
         return json.dumps({"ok": True, "dir": str(saved)})
+
+    def pick_dataset_folder_json(self) -> str:
+        folder = self._choose_directory(
+            "Choose folder for train / val / test dataset",
+            self._last_dataset_dir,
+        )
+        if not folder:
+            return json.dumps({"ok": False})
+        self._last_dataset_dir = folder
+        return json.dumps({"ok": True, "dir": folder})
 
     def _notify_labels_dir(self, folder: str):
         dir_js = json.dumps(folder)

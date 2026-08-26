@@ -179,8 +179,43 @@
     background: var(--panel-2); cursor: pointer; font-size: 12px;
   }
   .polygon-item.selected { border-color: var(--accent); background: var(--accent-dim); }
-  .polygon-item .pi-top { display: flex; justify-content: space-between; align-items: center; }
+  .polygon-item .pi-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .polygon-item .pi-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .polygon-item .pi-del {
+    flex: 0 0 18px; width: 18px; height: 18px; border: none; background: transparent;
+    color: var(--text-faint); padding: 0; font-size: 14px; line-height: 1; cursor: pointer;
+    border-radius: 3px;
+  }
+  .polygon-item .pi-del:hover { color: var(--danger); }
   .polygon-item .pi-verts { color: var(--text-faint); font-family: var(--mono); font-size: 10.5px; margin-top: 2px; }
+
+  .class-counts-head, .class-counts-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) 3.2em 3.6em;
+    gap: 6px; align-items: center; font-size: 11.5px;
+  }
+  .class-counts-head {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-faint); font-weight: 700; margin: 0 0 6px 0; padding: 0 4px;
+  }
+  .class-counts-head span:nth-child(2),
+  .class-counts-head span:nth-child(3),
+  .class-counts-row .cc-num { text-align: right; font-family: var(--mono); }
+  .class-counts-row { padding: 3px 4px; border-radius: 4px; color: var(--text-dim); }
+  .class-counts-row .cc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .class-counts-row .cc-here { color: var(--accent); }
+  .class-counts-row.cc-zero { color: var(--text-faint); }
+  .class-counts-summary {
+    font-size: 11px; color: var(--text-faint); padding: 8px 4px 0; line-height: 1.45;
+  }
+  .class-counts-group {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--text-faint); font-weight: 700; margin: 8px 0 2px 4px;
+  }
+  .class-counts-group:first-child { margin-top: 0; }
+  .split-pct .hint {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-faint); font-weight: 700; margin: 0 0 4px 0;
+  }
 
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-thumb { background: #2e333d; border-radius: 4px; }
@@ -276,10 +311,50 @@
         <button id="clearClassesBtn" class="danger">Clear all</button>
         <button id="resetClassesBtn">Reset defaults</button>
       </div>
+      <div id="classLockHint" class="class-empty" style="display:none; padding:8px 0 0;">
+        Classes are locked for this image folder. You can still add classes. Delete is disabled so existing YOLO ids stay valid.
+      </div>
       <div style="font-size:11px; color:var(--text-faint); margin-top:8px; line-height:1.45;">
         Add as many types and classes as you need. Colors are assigned automatically and match the mask on the image. Custom stays as a type you can always add to.
         Click a class to <b style="color:var(--text-dim); font-weight:600">replace</b> the selected mask’s class; Shift-click to <b style="color:var(--text-dim); font-weight:600">add</b> another class to it.
       </div>
+    </div>
+
+    <div class="block">
+      <div class="section-title">Class counts</div>
+      <div class="class-counts-head">
+        <span></span>
+        <span title="Masks on this image">img</span>
+        <span title="Masks in this image folder">folder</span>
+      </div>
+      <div id="classCountsBody"></div>
+      <div id="classCountsSummary" class="class-counts-summary">Open images to count masks per class.</div>
+    </div>
+
+    <div class="block">
+      <div class="section-title">Dataset</div>
+      <div class="class-empty" style="padding:0 0 8px;">After labelling, copy a train / val / test split. Training is not run in this app.</div>
+      <button id="chooseDatasetBtn" style="width:100%;">Choose folder…</button>
+      <input type="text" id="datasetPathInput" placeholder="or paste a folder path" style="margin-top:6px;" title="Folder that will contain images/train, images/val, images/test">
+      <div id="datasetDirHint" class="class-empty" style="padding:8px 0 0;">No folder chosen yet.</div>
+      <div class="row split-pct" style="margin-top:8px;">
+        <div>
+          <div class="hint">Train %</div>
+          <input type="number" id="splitTrainInput" min="0" max="100" step="1" value="70">
+        </div>
+        <div>
+          <div class="hint">Val %</div>
+          <input type="number" id="splitValInput" min="0" max="100" step="1" value="20">
+        </div>
+        <div>
+          <div class="hint">Test %</div>
+          <input type="number" id="splitTestInput" min="0" max="100" step="1" value="10">
+        </div>
+      </div>
+      <div class="hint" style="margin-top:8px; font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); font-weight:700;">Seed</div>
+      <input type="number" id="splitSeedInput" min="0" step="1" value="42" title="Same seed gives the same split">
+      <button id="createDatasetBtn" class="primary" style="width:100%; margin-top:8px;">Create train / val / test</button>
+      <div id="datasetStatus" class="class-counts-summary"></div>
     </div>
 
     <div class="block">
@@ -380,6 +455,10 @@
     profiles: {},                // name -> {classes, classGroup, groupOrder}
     activeProfile: "",           // profile currently loaded in the panel
     profilesReady: false,        // true after the first load/seed so we don't POST empty
+    classesLocked: false,        // true after images load — no deleting classes
+    folderStats: { masks: {}, images: {}, images_total: 0, images_labelled: 0 },
+    savedImageMasks: {},         // class id -> mask count last loaded/saved for this image
+    datasetDir: "",
     img: null,                  // HTMLImageElement, currently loaded
     imgW: 0, imgH: 0,
     polygons: [],                // [{classId, points:[[x,y]...] normalized}]
@@ -496,6 +575,37 @@
     return false;
   }
 
+  function confirmClassesForAnnotation() {
+    if (!requireClass()) return false;
+    const lines = state.classes.map((n, i) => `${i}  ${n}`).join("\n");
+    const profile = state.activeProfile ? `Profile: ${state.activeProfile}\n\n` : "";
+    return confirm(
+      "These classes will be used for this image folder.\n" +
+      "After images are open you cannot delete classes (YOLO ids must stay fixed).\n\n" +
+      profile +
+      lines +
+      "\n\nOpen images with this class list?"
+    );
+  }
+  window.confirmClassesForAnnotation = confirmClassesForAnnotation;
+
+  function setClassesLocked(locked) {
+    state.classesLocked = !!locked;
+    const clearBtn = $("clearClassesBtn");
+    const resetBtn = $("resetClassesBtn");
+    if (clearBtn) clearBtn.disabled = state.classesLocked;
+    if (resetBtn) resetBtn.disabled = state.classesLocked;
+    const select = $("classProfileSelect");
+    const renameBtn = $("renameProfileBtn");
+    const deleteBtn = $("deleteProfileBtn");
+    if (select) select.disabled = state.classesLocked;
+    if (renameBtn) renameBtn.disabled = state.classesLocked;
+    if (deleteBtn) deleteBtn.disabled = state.classesLocked;
+    const hint = $("classLockHint");
+    if (hint) hint.style.display = state.classesLocked ? "" : "none";
+    renderClassList();
+  }
+
   function getClassIds(poly) {
     if (!poly) return [];
     if (Array.isArray(poly.classIds) && poly.classIds.length) {
@@ -559,7 +669,7 @@
         const title = document.createElement("span");
         title.textContent = group;
         header.appendChild(title);
-        if (group !== "Custom") {
+        if (group !== "Custom" && !state.classesLocked) {
           const delType = document.createElement("button");
           delType.type = "button";
           delType.className = "class-del";
@@ -588,7 +698,7 @@
             <span class="class-swatch" style="background:${classColor(id)}"></span>
             <span class="class-key">${keyLabelForId(id)}</span>
             <span class="class-name">${escapeHtml(state.classes[id])}</span>
-            <button type="button" class="class-del" data-del-class="${id}" title="Delete this class">×</button>
+            ${state.classesLocked ? "" : `<button type="button" class="class-del" data-del-class="${id}" title="Delete this class">×</button>`}
           `;
           row.title = selectedHasClass(id)
             ? "On this mask — click to keep only this class, Shift-click does nothing extra"
@@ -599,15 +709,192 @@
             else setActiveClass(id);
           });
           const delBtn = row.querySelector(".class-del");
-          delBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            deleteClass(id);
-          });
+          if (delBtn) {
+            delBtn.addEventListener("click", (e) => {
+              e.stopPropagation();
+              deleteClass(id);
+            });
+          }
           classListEl.appendChild(row);
         });
       });
     }
     renderGroupSelect();
+    refreshCountDisplay();
+  }
+
+  function masksFromPolygons() {
+    const masks = {};
+    state.polygons.forEach(poly => {
+      getClassIds(poly).forEach(id => {
+        masks[id] = (masks[id] || 0) + 1;
+      });
+    });
+    return masks;
+  }
+
+  function countMap(obj) {
+    const out = {};
+    if (!obj) return out;
+    Object.keys(obj).forEach(key => {
+      const id = Number(key);
+      if (!Number.isInteger(id) || id < 0) return;
+      out[id] = Number(obj[key]) || 0;
+    });
+    return out;
+  }
+
+  function emptyFolderStats() {
+    return { masks: {}, images: {}, images_total: 0, images_labelled: 0 };
+  }
+
+  function displayedFolderMasks() {
+    const disk = countMap(state.folderStats && state.folderStats.masks);
+    const saved = countMap(state.savedImageMasks);
+    const live = masksFromPolygons();
+    const ids = new Set([...Object.keys(disk), ...Object.keys(saved), ...Object.keys(live)].map(Number));
+    const out = {};
+    ids.forEach(id => {
+      out[id] = Math.max(0, (disk[id] || 0) - (saved[id] || 0) + (live[id] || 0));
+    });
+    return out;
+  }
+
+  function displayedFolderImages() {
+    const disk = countMap(state.folderStats && state.folderStats.images);
+    const saved = countMap(state.savedImageMasks);
+    const live = masksFromPolygons();
+    const ids = new Set([
+      ...Object.keys(disk), ...Object.keys(saved), ...Object.keys(live),
+      ...state.classes.map((_, i) => i),
+    ].map(Number));
+    const out = {};
+    ids.forEach(id => {
+      out[id] = Math.max(0, (disk[id] || 0) - ((saved[id] || 0) > 0 ? 1 : 0) + ((live[id] || 0) > 0 ? 1 : 0));
+    });
+    return out;
+  }
+
+  function refreshCountDisplay() {
+    const body = $("classCountsBody");
+    const summary = $("classCountsSummary");
+    if (!body || !summary) return;
+    const live = masksFromPolygons();
+    const folderMasks = displayedFolderMasks();
+    const folderImages = displayedFolderImages();
+    const known = new Set(state.classes.map((_, i) => i));
+    const extraIds = Object.keys(folderMasks).map(Number).filter(id => !known.has(id) && (folderMasks[id] || live[id]));
+    extraIds.sort((a, b) => a - b);
+
+    body.innerHTML = "";
+    if (!state.classes.length && !extraIds.length) {
+      summary.textContent = "Add classes, then open images to count masks per class.";
+      return;
+    }
+
+    const addRow = (id, name) => {
+      const here = live[id] || 0;
+      const all = folderMasks[id] || 0;
+      const row = document.createElement("div");
+      row.className = "class-counts-row" + (here === 0 && all === 0 ? " cc-zero" : "");
+      const imgCount = state.index >= 0 ? String(here) : "—";
+      const folderCount = state.files.length ? String(all) : "—";
+      const imgN = folderImages[id] || 0;
+      row.title = state.files.length
+        ? `${here} on this image · ${all} masks in the folder (${imgN} image${imgN === 1 ? "" : "s"})`
+        : "Open images to count the whole folder";
+      row.innerHTML = `
+        <span class="cc-name">${escapeHtml(name)}</span>
+        <span class="cc-num${here ? " cc-here" : ""}">${imgCount}</span>
+        <span class="cc-num">${folderCount}</span>
+      `;
+      body.appendChild(row);
+    };
+
+    uniqueGroups().forEach(group => {
+      const ids = [];
+      state.classes.forEach((_, id) => {
+        if ((state.classGroup[id] || "Custom") === group) ids.push(id);
+      });
+      if (!ids.length) return;
+      const header = document.createElement("div");
+      header.className = "class-counts-group";
+      header.textContent = group;
+      body.appendChild(header);
+      ids.forEach(id => addRow(id, state.classes[id]));
+    });
+    if (extraIds.length) {
+      const header = document.createElement("div");
+      header.className = "class-counts-group";
+      header.textContent = "Other ids in labels";
+      body.appendChild(header);
+      extraIds.forEach(id => addRow(id, `id ${id}`));
+    }
+
+    const liveTotal = Object.values(live).reduce((a, b) => a + b, 0);
+    const folderTotal = Object.values(folderMasks).reduce((a, b) => a + b, 0);
+    const savedAny = Object.values(countMap(state.savedImageMasks)).some(n => n > 0);
+    const liveAny = liveTotal > 0;
+    const labelled = Math.max(
+      0,
+      (Number(state.folderStats.images_labelled) || 0) - (savedAny ? 1 : 0) + (liveAny ? 1 : 0)
+    );
+    const total = Number(state.folderStats.images_total) || state.files.length || 0;
+    if (!state.files.length) {
+      summary.textContent = "Open images to count masks per class for the folder.";
+    } else {
+      summary.textContent = `${liveTotal} mask${liveTotal === 1 ? "" : "s"} on this image · ${folderTotal} in folder (${labelled} / ${total} images labelled)`;
+    }
+  }
+
+  function commitLiveCountsToFolderStats() {
+    const labelled = Math.max(
+      0,
+      (Number(state.folderStats.images_labelled) || 0)
+        - (Object.values(countMap(state.savedImageMasks)).some(n => n > 0) ? 1 : 0)
+        + (Object.values(masksFromPolygons()).some(n => n > 0) ? 1 : 0)
+    );
+    state.folderStats = {
+      masks: displayedFolderMasks(),
+      images: displayedFolderImages(),
+      images_total: Number(state.folderStats.images_total) || state.files.length || 0,
+      images_labelled: labelled,
+    };
+    state.savedImageMasks = masksFromPolygons();
+    refreshCountDisplay();
+  }
+
+  let folderStatsTimer = null;
+  let folderStatsGen = 0;
+
+  function scheduleFolderStats() {
+    clearTimeout(folderStatsTimer);
+    folderStatsTimer = setTimeout(() => { refreshFolderStats(); }, 250);
+  }
+
+  async function refreshFolderStats() {
+    const gen = ++folderStatsGen;
+    if (!state.files.length && !state.labelsDir) {
+      state.folderStats = emptyFolderStats();
+      refreshCountDisplay();
+      return;
+    }
+    try {
+      const res = await fetch(state.segmentServerUrl + "/project/label-stats");
+      if (gen !== folderStatsGen) return;
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      const data = await res.json();
+      if (gen !== folderStatsGen) return;
+      state.folderStats = {
+        masks: data.masks || {},
+        images: data.images || {},
+        images_total: Number(data.images_total) || 0,
+        images_labelled: Number(data.images_labelled) || 0,
+      };
+    } catch (e) {
+      if (gen !== folderStatsGen) return;
+    }
+    refreshCountDisplay();
   }
 
   function currentTaxonomy() {
@@ -753,6 +1040,11 @@
   }
 
   function applyProfile(name) {
+    if (state.classesLocked) {
+      setStatus("class list is locked while images are open — close images to switch profiles");
+      renderProfileSelect();
+      return false;
+    }
     const profile = state.profiles[name];
     if (!profile) return false;
     state.activeProfile = name;
@@ -784,7 +1076,7 @@
       note.textContent = "Build a class list below, then click Save profile.";
       return;
     }
-    select.disabled = false;
+    select.disabled = state.classesLocked;
     names.forEach(name => {
       const opt = document.createElement("option");
       opt.value = name;
@@ -817,6 +1109,10 @@
   }
 
   async function renameProfile() {
+    if (state.classesLocked) {
+      setStatus("class list is locked while images are open");
+      return;
+    }
     const current = state.activeProfile;
     if (!current || !state.profiles[current]) {
       setStatus("no profile selected in the dropdown");
@@ -844,6 +1140,10 @@
   }
 
   async function deleteProfile() {
+    if (state.classesLocked) {
+      setStatus("class list is locked while images are open");
+      return;
+    }
     const current = state.activeProfile;
     if (!current || !state.profiles[current]) {
       setStatus("no profile to delete");
@@ -897,6 +1197,10 @@
   }
 
   function deleteClass(id) {
+    if (state.classesLocked) {
+      setStatus("classes are locked while images are open");
+      return;
+    }
     if (id < 0 || id >= state.classes.length) return;
     const name = state.classes[id];
     if (!confirm(`Delete class "${name}"? Masks using it will be remapped.`)) return;
@@ -909,6 +1213,10 @@
   }
 
   function deleteClassType(group) {
+    if (state.classesLocked) {
+      setStatus("classes are locked while images are open");
+      return;
+    }
     if (!group || group === "Custom") return;
     const ids = [];
     state.classes.forEach((_, id) => {
@@ -971,12 +1279,24 @@
     draw();
   }
 
+  function deletePolygon(idx) {
+    if (idx < 0 || idx >= state.polygons.length) return;
+    pushUndo();
+    state.polygons.splice(idx, 1);
+    if (state.selectedPoly === idx) state.selectedPoly = -1;
+    else if (state.selectedPoly > idx) state.selectedPoly -= 1;
+    markDirty();
+    draw();
+    renderSidePanels();
+    setStatus("polygon deleted");
+  }
+
   function removeClassFromSelected(id) {
     if (state.selectedPoly < 0) return;
     const poly = state.polygons[state.selectedPoly];
     const ids = getClassIds(poly).filter(x => x !== id);
     if (!ids.length) {
-      setStatus("keep at least one class, or press Del to delete the polygon");
+      deletePolygon(state.selectedPoly);
       return;
     }
     pushUndo();
@@ -1058,12 +1378,20 @@
     if (e.key === "Enter") { e.preventDefault(); addNamedClass(); }
   });
   $("clearClassesBtn").addEventListener("click", () => {
+    if (state.classesLocked) {
+      setStatus("classes are locked while images are open");
+      return;
+    }
     if (!confirm("Clear all class types and classes? Existing masks keep their numeric class ids until you reassign them.")) return;
     clearAllClasses();
     $("classProfileName").value = "";
     setStatus("classes cleared — add types and classes, then Save profile");
   });
   $("resetClassesBtn").addEventListener("click", () => {
+    if (state.classesLocked) {
+      setStatus("classes are locked while images are open");
+      return;
+    }
     if (confirm("Reset to the 10 default subclasses (ids 0–9)? Custom types and classes you added will be removed from this list (polygons already using them keep their class id).")) {
       resetToDefaultClasses();
       setStatus("restored default subclasses 0–9");
@@ -1100,6 +1428,7 @@
     if (state.labelsDir) {
       setStatus("labels will be saved to " + state.labelsDir);
       syncLabelSidecars();
+      scheduleFolderStats();
     }
   }
   window.setLabelsDir = setLabelsDir;
@@ -1126,7 +1455,132 @@
     }));
   }
 
-  function applyServerFileList(files, dirLabel) {
+  function setDatasetDir(dir) {
+    state.datasetDir = (dir || "").trim();
+    const input = $("datasetPathInput");
+    if (input && input.value.trim() !== state.datasetDir) input.value = state.datasetDir;
+    const hint = $("datasetDirHint");
+    if (hint) {
+      hint.innerHTML = state.datasetDir
+        ? `Writes <b style="color:var(--text-dim); font-weight:600">images/train · val · test</b> into ${escapeHtml(state.datasetDir)}`
+        : "No folder chosen yet.";
+    }
+  }
+
+  function pickDesktopDatasetFolder() {
+    return waitForDesktopBridge().then(bridge => new Promise((resolve, reject) => {
+      if (!bridge.pick_dataset_folder) {
+        reject(new Error("dataset folder picker not available — paste a path below"));
+        return;
+      }
+      bridge.pick_dataset_folder(raw => {
+        try { resolve(JSON.parse(raw)); }
+        catch (e) { reject(e); }
+      });
+    }));
+  }
+
+  function splitPercents() {
+    const train = Number($("splitTrainInput").value);
+    const val = Number($("splitValInput").value);
+    const test = Number($("splitTestInput").value);
+    if (![train, val, test].every(n => Number.isFinite(n) && n >= 0)) {
+      throw new Error("train, val, and test must be numbers 0–100");
+    }
+    const sum = train + val + test;
+    if (Math.abs(sum - 100) > 0.001) {
+      throw new Error(`train + val + test must be 100 (currently ${sum})`);
+    }
+    const seed = Number($("splitSeedInput").value);
+    if (!Number.isFinite(seed) || seed < 0) throw new Error("seed must be 0 or more");
+    return { train: train / 100, val: val / 100, test: test / 100, seed: Math.round(seed) };
+  }
+
+  function setDatasetStatus(msg) {
+    const el = $("datasetStatus");
+    if (el) el.textContent = msg || "";
+  }
+
+  $("chooseDatasetBtn").addEventListener("click", async () => {
+    if (isDesktopApp()) {
+      try {
+        const data = await pickDesktopDatasetFolder();
+        if (!data || !data.ok) return;
+        setDatasetDir(data.dir);
+        setDatasetStatus("");
+      } catch (e) {
+        setDatasetStatus(e.message || String(e));
+      }
+      return;
+    }
+    $("datasetPathInput").focus();
+    setDatasetStatus("paste the folder path, then Create train / val / test");
+  });
+
+  $("datasetPathInput").addEventListener("change", () => {
+    setDatasetDir($("datasetPathInput").value);
+  });
+  $("datasetPathInput").addEventListener("input", () => {
+    state.datasetDir = $("datasetPathInput").value.trim();
+  });
+
+  $("createDatasetBtn").addEventListener("click", async () => {
+    const btn = $("createDatasetBtn");
+    setDatasetDir($("datasetPathInput").value);
+    if (!state.files.length) {
+      setDatasetStatus("open an images folder first");
+      return;
+    }
+    if (!state.labelsDir) {
+      setDatasetStatus("no labels folder — open images so labels can be saved");
+      return;
+    }
+    if (!state.datasetDir) {
+      setDatasetStatus("choose a folder for the dataset");
+      return;
+    }
+    let ratios;
+    try { ratios = splitPercents(); }
+    catch (e) {
+      setDatasetStatus(e.message || String(e));
+      return;
+    }
+    if (state.dirty) {
+      const ok = await saveCurrentLabel();
+      if (!ok) {
+        setDatasetStatus("save the current image before creating the dataset");
+        return;
+      }
+    }
+    btn.disabled = true;
+    setDatasetStatus("copying train / val / test…");
+    try {
+      const res = await fetch(state.segmentServerUrl + "/project/split-dataset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          out: state.datasetDir,
+          train: ratios.train,
+          val: ratios.val,
+          test: ratios.test,
+          seed: ratios.seed,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      const c = data.counts || {};
+      const msg = `train ${c.train || 0} · val ${c.val || 0} · test ${c.test || 0} → ${data.out}`;
+      setDatasetStatus(msg + (data.csv ? `  (index: split.csv)` : ""));
+      setStatus(msg);
+    } catch (e) {
+      setDatasetStatus(e.message || String(e));
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  function applyServerFileList(files, dirLabel, alreadyConfirmed) {
+    if (!alreadyConfirmed && !confirmClassesForAnnotation()) return;
     beginLoad();
     state.files = (files || []).map(f => ({
       name: f.name,
@@ -1141,8 +1595,10 @@
     } else {
       dropzone.style.display = "";
     }
+    setClassesLocked(state.files.length > 0);
     const where = dirLabel ? ` from ${dirLabel}` : "";
     setStatus(`${state.files.length} image(s) found${where} — saving .txt files to ${labelsSaveWhere()}`);
+    scheduleFolderStats();
   }
   window.applyServerFileList = applyServerFileList;
 
@@ -1151,12 +1607,13 @@
   // ---------------------------------------------------------------------
 
   $("openImagesBtn").addEventListener("click", async () => {
+    if (!confirmClassesForAnnotation()) return;
     if (isDesktopApp()) {
       try {
         const data = await pickDesktopImagesFolder();
         if (!data || !data.ok) return;
         if (data.labels_dir) setLabelsDir(data.labels_dir);
-        applyServerFileList(data.files, data.dir);
+        applyServerFileList(data.files, data.dir, true);
       } catch (e) {
         setStatus("could not open folder: " + (e.message || e));
       }
@@ -1165,7 +1622,7 @@
     if (state.supportsFS) {
       try {
         state.imagesDirHandle = await window.showDirectoryPicker();
-        await loadFileListFromFS();
+        await loadFileListFromFS(true);
       } catch (e) { /* user cancelled */ }
     } else {
       $("fallbackImagesInput").click();
@@ -1199,7 +1656,8 @@
     }
   });
 
-  async function loadFileListFromFS() {
+  async function loadFileListFromFS(alreadyConfirmed) {
+    if (!alreadyConfirmed && !confirmClassesForAnnotation()) return;
     const files = [];
     for await (const [name, handle] of state.imagesDirHandle.entries()) {
       if (handle.kind !== "file") continue;
@@ -1216,7 +1674,9 @@
       dropzone.style.display = "none";
       await loadCurrentImageAndLabel();
     }
+    setClassesLocked(files.length > 0);
     setStatus(`${files.length} image(s) found — saving .txt files to ${labelsSaveWhere()}`);
+    scheduleFolderStats();
   }
 
   // Fallback: <input webkitdirectory> for browsers without File System Access API
@@ -1234,7 +1694,9 @@
       dropzone.style.display = "none";
       loadCurrentImageAndLabel();
     }
+    setClassesLocked(state.files.length > 0);
     setStatus(`${state.files.length} image(s) loaded — saving .txt files to ${labelsSaveWhere()}`);
+    scheduleFolderStats();
   });
 
   $("fallbackLabelsInput").addEventListener("change", async (e) => {
@@ -1371,8 +1833,12 @@
     const hasLabels = text != null && text.trim() !== "";
     if (hasLabels) {
       state.polygons = parseYoloSeg(text);
+      state.savedImageMasks = masksFromPolygons();
     } else if (state.autoDetect) {
+      state.savedImageMasks = {};
       await autoDetectCurrentImage(gen, stem);
+    } else {
+      state.savedImageMasks = {};
     }
     if (isStale(gen, stem)) return;
     if (!hasLabels) markDirty();
@@ -2017,12 +2483,8 @@
         break;
       case "Delete": case "Backspace":
         if (state.selectedPoly >= 0) {
-          pushUndo();
-          state.polygons.splice(state.selectedPoly, 1);
-          state.selectedPoly = -1;
-          markDirty();
-          draw(); renderSidePanels();
-          setStatus("polygon deleted");
+          e.preventDefault();
+          deletePolygon(state.selectedPoly);
         }
         break;
       case "ArrowLeft":
@@ -2157,6 +2619,8 @@
 
     setStatus(auto ? `auto-saved ${stem}.txt → ${labelsSaveWhere()}` : `saved ${stem}.txt → ${labelsSaveWhere()}`);
     state.reviewed.add(name);
+    commitLiveCountsToFolderStats();
+    scheduleFolderStats();
     saving = false;
     if (currentStem() !== stem) {
       pendingSave = false;
@@ -2294,14 +2758,27 @@
         div.className = "polygon-item" + (idx === state.selectedPoly ? " selected" : "");
         div.innerHTML = `
           <div class="pi-top">
-            <span>${getClassIds(p).map(id =>
+            <span class="pi-name">${getClassIds(p).map(id =>
               `<span style="color:${classColor(id)}">${escapeHtml(classLabel(id))}</span>`
             ).join('<span style="color:var(--text-faint)"> + </span>')}</span>
             <span style="color:var(--text-faint)">#${idx}</span>
+            <button type="button" class="pi-del" data-del-poly="${idx}" title="Delete this polygon">×</button>
           </div>
           <div class="pi-verts">${p.points.length} vertices</div>
         `;
-        div.addEventListener("click", () => { state.selectedPoly = idx; draw(); renderSidePanels(); });
+        div.addEventListener("click", (e) => {
+          if (e.target.closest(".pi-del")) return;
+          state.selectedPoly = idx;
+          draw();
+          renderSidePanels();
+        });
+        const delPoly = div.querySelector(".pi-del");
+        if (delPoly) {
+          delPoly.addEventListener("click", (e) => {
+            e.stopPropagation();
+            deletePolygon(idx);
+          });
+        }
         polygonListEl.appendChild(div);
       });
     }
@@ -2336,7 +2813,7 @@
         <span class="class-chip">
           <span class="class-swatch" style="background:${classColor(id)}"></span>
           <span style="color:${classColor(id)}">${escapeHtml(classLabel(id))}</span>
-          <button type="button" class="chip-x" data-remove-class="${id}" title="Remove this class">×</button>
+          <button type="button" class="chip-x" data-remove-class="${id}" title="Remove this class (deletes the mask if it is the only class)">×</button>
         </span>
       `).join("");
       selectedInfoEl.innerHTML = `
@@ -2352,7 +2829,10 @@
           ${addOptions}
         </select>
         vertices: ${p.points.length}<br><br>
-        <span style="color:var(--text-faint)">Click a class on the left to replace. Shift-click a class to add it. × on a chip removes that class only.</span>
+        <button type="button" id="deletePolyBtn" class="danger" style="width:100%;">Delete this polygon</button>
+        <div style="color:var(--text-faint); margin-top:8px; line-height:1.45;">
+          Each row above is a separate mask. Chip × or Delete this polygon removes it.
+        </div>
       `;
       $("polyClassSelect").addEventListener("change", (e) => {
         const id = parseInt(e.target.value, 10);
@@ -2368,9 +2848,14 @@
           removeClassFromSelected(parseInt(btn.getAttribute("data-remove-class"), 10));
         });
       });
+      const deleteBtn = $("deletePolyBtn");
+      if (deleteBtn) {
+        deleteBtn.addEventListener("click", () => deletePolygon(state.selectedPoly));
+      }
     } else {
       selectedInfoEl.textContent = "nothing selected — click a mask, or click a fruit to segment one";
     }
+    refreshCountDisplay();
   }
 
   // ---------------------------------------------------------------------
