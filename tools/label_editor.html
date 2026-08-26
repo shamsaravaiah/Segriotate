@@ -333,7 +333,7 @@
 
     <div class="block">
       <div class="section-title">Dataset</div>
-      <div class="class-empty" style="padding:0 0 8px;">After labelling, copy a train / val / test split. Training is not run in this app.</div>
+      <div class="class-empty" style="padding:0 0 8px;">Copies only images that have at least one mask. Empty photos are skipped. Training is not run in this app.</div>
       <button id="chooseDatasetBtn" style="width:100%;">Choose folder…</button>
       <input type="text" id="datasetPathInput" placeholder="or paste a folder path" style="margin-top:6px;" title="Folder that will contain images/train, images/val, images/test">
       <div id="datasetDirHint" class="class-empty" style="padding:8px 0 0;">No folder chosen yet.</div>
@@ -519,18 +519,13 @@
   // Classes
   // ---------------------------------------------------------------------
 
-  function ensureClass(id) {
-    let added = false;
-    while (state.classes.length <= id) {
-      state.classes.push(`class_${state.classes.length}`);
-      state.classGroup.push("Custom");
-      added = true;
+  function clampClassId(id) {
+    const n = Number(id);
+    if (Number.isInteger(n) && n >= 0 && n < state.classes.length) return n;
+    if (state.activeClassId >= 0 && state.activeClassId < state.classes.length) {
+      return state.activeClassId;
     }
-    if (added) {
-      uniqueGroups();
-      persistClasses();
-      renderClassList();
-    }
+    return 0;
   }
 
   function uniqueGroups() {
@@ -1569,8 +1564,13 @@
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       const c = data.counts || {};
+      const skipped = Number(data.skipped) || 0;
       const msg = `train ${c.train || 0} · val ${c.val || 0} · test ${c.test || 0} → ${data.out}`;
-      setDatasetStatus(msg + (data.csv ? `  (index: split.csv)` : ""));
+      setDatasetStatus(
+        msg
+        + (skipped ? `  (skipped ${skipped} with no masks)` : "")
+        + (data.csv ? "  (index: split.csv)" : "")
+      );
       setStatus(msg);
     } catch (e) {
       setDatasetStatus(e.message || String(e));
@@ -1779,12 +1779,11 @@
     text.split("\n").map(l => l.trim()).filter(Boolean).forEach(line => {
       const parts = line.split(/\s+/).map(Number);
       if (parts.length < 7) return; // classId + at least 3 points
-      const classId = parts[0];
+      const classId = clampClassId(parts[0]);
       const pts = [];
       for (let i = 1; i < parts.length - 1; i += 2) {
         pts.push([parts[i], parts[i + 1]]);
       }
-      ensureClass(classId);
       const key = pts.map(([x, y]) => `${Number(x).toFixed(5)},${Number(y).toFixed(5)}`).join("|");
       if (byKey.has(key)) {
         const poly = byKey.get(key);
@@ -1865,12 +1864,14 @@
       }
       const data = await res.json();
       if (isStale(gen, stem)) return;
+      const classId = clampClassId(state.activeClassId);
       state.polygons = (data.objects || []).map(o => makePoly(
-        [o.classId],
+        [classId],
         o.points.map(([x, y]) => [clamp01(x), clamp01(y)]),
       ));
+      const name = classLabel(classId);
       setSegmentStatus(state.polygons.length
-        ? `${state.polygons.length} object(s) auto-detected`
+        ? `${state.polygons.length} outline(s) — class ${name}. Click a class to change.`
         : "no objects detected — draw manually or use click-to-segment");
     } catch (e) {
       if (isAbortError(e) || isStale(gen, stem)) return;

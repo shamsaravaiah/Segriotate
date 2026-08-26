@@ -8,9 +8,11 @@ Copies files (never moves) so the editor's folders stay intact. Writes:
     <out>/data.yaml
     <out>/split.csv
 
-Stratification matches the usual practical approach for multi-class images:
-assign unclaimed images per class in id order, then split leftover/empty
-(background) images the same way. Every image lands in exactly one split.
+Only images with at least one mask (a non-empty YOLO line) are copied.
+Empty placeholder .txt files created by the editor are skipped.
+
+Stratification assigns unclaimed images per class in id order so each
+class keeps roughly the requested train/val/test ratio.
 """
 
 from __future__ import annotations
@@ -122,7 +124,7 @@ def cut_three_ways(
 
 def assign_splits(
     stem_classes: dict[str, set[int]],
-    leftover: set[str],
+    leftover: set[str] | None,
     train_ratio: float,
     val_ratio: float,
     seed: int,
@@ -151,7 +153,7 @@ def assign_splits(
             "test": sum(1 for s in class_to_stems[class_id] if assigned.get(s) == "test"),
         }
 
-    rest = sorted(leftover - set(assigned.keys()))
+    rest = sorted((leftover or set()) - set(assigned.keys()))
     if rest:
         train_s, val_s, test_s = cut_three_ways(rest, train_ratio, val_ratio, rng)
         for s in train_s:
@@ -269,10 +271,13 @@ def split_dataset(
     if not stem_to_image:
         raise ValueError(f"no images found in {images_dir}")
 
-    stem_classes, stem_masks, empty_stems = parse_labels(labels_dir, set(stem_to_image.keys()))
-    unlabeled = set(stem_to_image.keys()) - set(stem_classes.keys()) - empty_stems
-    leftover = empty_stems | unlabeled
-    assigned, per_class = assign_splits(stem_classes, leftover, train, val, seed)
+    stem_classes, stem_masks, _empty_stems = parse_labels(labels_dir, set(stem_to_image.keys()))
+    skipped = set(stem_to_image.keys()) - set(stem_classes.keys())
+    if not stem_classes:
+        raise ValueError(
+            "no annotated images — draw at least one mask before creating the dataset"
+        )
+    assigned, per_class = assign_splits(stem_classes, None, train, val, seed)
 
     names = read_class_names(labels_dir)
     for cid in sorted({c for classes in stem_classes.values() for c in classes}):
@@ -308,7 +313,8 @@ def split_dataset(
         "out": str(out_dir),
         "counts": counts,
         "labelled": len(stem_classes),
-        "background": len(leftover),
+        "skipped": len(skipped),
+        "background": len(skipped),
         "csv": str(csv_path),
         "yaml": str(yaml_path),
         "per_class": {
