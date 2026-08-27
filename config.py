@@ -10,6 +10,7 @@ Edit the values below, then run the scripts in scripts/ in order:
     04_train.py             -> train (or fine-tune) a YOLO-seg model
 """
 
+import shutil
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -18,12 +19,37 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
+# App-created files live here so they stay out of the code tree.
+# Existing labels/ and class_profiles.json at the project root are still read.
+WORKSPACE = PROJECT_ROOT / "workspace"
+LABELS_ROOT = WORKSPACE / "labels"
+LEGACY_LABELS_ROOT = PROJECT_ROOT / "labels"
+PROFILES_DIR = WORKSPACE / "profiles"
+LOGS_DIR = WORKSPACE / "logs"
+LOG_PATH = LOGS_DIR / "segriotate.log"
+TRAIN_ROOT = WORKSPACE / "train"
+TRAIN_RUNS_DIR = TRAIN_ROOT / "runs"
+TRAIN_PRESETS_DIR = TRAIN_ROOT / "presets"
+TRAIN_SCRATCH_DIR = TRAIN_ROOT / "job_scratch"
+TRAIN_CACHE_DIR = TRAIN_ROOT / "cache"
+
 MODEL_PATH = PROJECT_ROOT / "models" / "dot-pt" / "segmentation.pt"   # your existing YOLO-seg model
 MODEL_PT_DIR = PROJECT_ROOT / "models" / "dot-pt"
 MODEL_ENGINE_DIR = PROJECT_ROOT / "models" / "dot-engine"
 MODEL_SOURCE_DIR = PROJECT_ROOT / "models" / "source"        # optional drop folder; copied into dot-pt
 IMAGE_DIR = PROJECT_ROOT / "images"                          # the 10,000 raw images
-LABEL_DIR = PROJECT_ROOT / "labels"                          # YOLO .txt annotations (editor writes here)
+LABEL_DIR = LABELS_ROOT                                      # YOLO .txt annotations (editor writes here)
+LEGACY_CLASS_PROFILES_PATH = PROJECT_ROOT / "class_profiles.json"
+
+CLICK_MODEL_LABELS = {
+    "FastSAM-s": "FastSAM",
+    "FastSAM-x": "FastSAM-x",
+    "mobile_sam": "MobileSAM",
+}
+ANNOTATE_PT_LABELS = {
+    "segmentation": "Auto-Detect (segmentation)",
+    **CLICK_MODEL_LABELS,
+}
 
 # Click-to-segment weights. Missing files are downloaded on first launch.
 MODEL_DOWNLOADS = {
@@ -75,7 +101,41 @@ MAX_INSTANCES_BEFORE_REVIEW = 15
 
 # Named class profiles saved from the editor's left panel. Plain JSON, so it
 # can be backed up, committed, or copied to another machine.
-CLASS_PROFILES_PATH = PROJECT_ROOT / "class_profiles.json"
+CLASS_PROFILES_PATH = PROFILES_DIR / "class_profiles.json"
+
+
+def _move_legacy_train_dir(legacy: Path, dest: Path) -> None:
+    """Move leftover workspace/<name> into workspace/train/<name> once."""
+    try:
+        if not legacy.exists() or legacy.resolve() == dest.resolve():
+            return
+        if dest.exists():
+            return
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(legacy), str(dest))
+    except OSError:
+        pass
+
+
+def ensure_workspace() -> None:
+    """Create workspace folders and copy the old profiles file once if needed."""
+    LABELS_ROOT.mkdir(parents=True, exist_ok=True)
+    PROFILES_DIR.mkdir(parents=True, exist_ok=True)
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    TRAIN_ROOT.mkdir(parents=True, exist_ok=True)
+    _move_legacy_train_dir(WORKSPACE / "runs", TRAIN_RUNS_DIR)
+    _move_legacy_train_dir(WORKSPACE / "job_scratch", TRAIN_SCRATCH_DIR)
+    _move_legacy_train_dir(WORKSPACE / "presets", TRAIN_PRESETS_DIR)
+    _move_legacy_train_dir(WORKSPACE / "cache", TRAIN_CACHE_DIR)
+    TRAIN_RUNS_DIR.mkdir(parents=True, exist_ok=True)
+    TRAIN_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
+    TRAIN_SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
+    (TRAIN_CACHE_DIR / "datasets").mkdir(parents=True, exist_ok=True)
+    if not CLASS_PROFILES_PATH.is_file() and LEGACY_CLASS_PROFILES_PATH.is_file():
+        shutil.copy2(LEGACY_CLASS_PROFILES_PATH, CLASS_PROFILES_PATH)
+
+
+ensure_workspace()
 
 # Option A: collapse every detection into a single class (e.g. your existing
 # model is only being used as a generic "mask generator"). Set to an int to

@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Segriotate</title>
+<title>Segri-Labs — Annotate</title>
+<link rel="icon" type="image/png" href="/icon.png">
 <script src="vendor/jszip.min.js"></script>
 <style>
   :root{
@@ -32,7 +33,13 @@
     padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--border);
   }
   header h1 { font-size: 14px; font-weight: 600; letter-spacing: 0.02em; margin: 0; color: var(--text); }
-  header .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  header a.nav-link {
+    font-size: 12px; font-weight: 600; color: var(--text-dim);
+    padding: 4px 8px; border-radius: 5px; text-decoration: none;
+  }
+  header a.nav-link:hover { color: var(--text); background: var(--panel-2); }
+  header a.nav-link.active { color: var(--accent); }
+  header .app-logo { width: 22px; height: 22px; border-radius: 5px; flex-shrink: 0; display: block; }
   header .spacer { flex: 1; }
   header .filename { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
   header .progress { font-family: var(--mono); font-size: 12px; color: var(--accent); display: inline-flex; align-items: center; gap: 2px; }
@@ -224,8 +231,11 @@
 <body>
 <div id="app">
   <header>
-    <div class="dot"></div>
-    <h1>SEGRIOTATE</h1>
+    <img class="app-logo" src="/icon.png" width="22" height="22" alt="">
+    <h1>SEGRI-LABS</h1>
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link active" href="/annotate">Annotate</a>
+    <a class="nav-link" href="/train">Train</a>
     <div class="spacer"></div>
     <span class="filename" id="filenameLabel">no folder open</span>
     <span class="progress" id="progressLabel" title="Click the left number, type, and press Enter to jump">
@@ -247,7 +257,7 @@
         <button id="openLabelsBtn" title="Choose where YOLO .txt label files are saved">Labels Folder…</button>
       </div>
       <div id="labelsDirHint" style="font-size:11px; color:var(--text-faint); margin-bottom:8px; line-height:1.45;">
-        Open Images… to pick a folder (e.g. batch001). Labels are saved to labels/&lt;folder&gt;_labels.
+        Open Images… to pick a folder (e.g. batch001). Labels are saved to workspace/labels/&lt;folder&gt;_labels.
       </div>
       <div class="row">
         <button id="prevBtn" disabled>◀ Prev</button>
@@ -382,7 +392,7 @@
     <canvas id="canvas" width="800" height="600"></canvas>
     <div id="dropzone">
       <div class="big">No image loaded</div>
-      <p>Click <b>Open Images…</b> to choose a folder (for example <b>batch001</b>). Labels are saved automatically to <b>labels/batch001_labels</b>.</p>
+      <p>Click <b>Open Images…</b> to choose a folder (for example <b>batch001</b>). Labels are saved automatically to <b>workspace/labels/batch001_labels</b>.</p>
     </div>
   </section>
 
@@ -1418,7 +1428,7 @@
     if (hint) {
       hint.innerHTML = state.labelsDir
         ? `Saves go to <b style="color:var(--text-dim); font-weight:600">${escapeHtml(state.labelsDir)}</b>`
-        : "Open Images… to pick a folder (e.g. img-1). Labels are saved to labels/&lt;folder&gt;_labels.";
+        : "Open Images… to pick a folder (e.g. img-1). Labels are saved to workspace/labels/&lt;folder&gt;_labels.";
     }
     if (state.labelsDir) {
       setStatus("labels will be saved to " + state.labelsDir);

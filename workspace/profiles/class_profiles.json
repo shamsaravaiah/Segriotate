@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "active": "testing-profile",
+  "profiles": {
+    "Default": {
+      "classes": [
+        "Export Premium",
+        "Prime Export",
+        "Domestic Premium",
+        "Prime Retail",
+        "Standard Retail",
+        "Everyday Retail",
+        "Commercial",
+        "Value",
+        "Processing",
+        "Reject"
+      ],
+      "classGroup": [
+        "Export Quality (EXP)",
+        "Export Quality (EXP)",
+        "Domestic Premium (DOM)",
+        "Domestic Premium (DOM)",
+        "Retail Standard (RET)",
+        "Retail Standard (RET)",
+        "Commercial (COM)",
+        "Commercial (COM)",
+        "Non-Market (NMR)",
+        "Non-Market (NMR)"
+      ],
+      "groupOrder": [
+        "Export Quality (EXP)",
+        "Domestic Premium (DOM)",
+        "Retail Standard (RET)",
+        "Commercial (COM)",
+        "Non-Market (NMR)",
+        "Custom"
+      ]
+    },
+    "testing-profile": {
+      "classes": [
+        "Export Premium",
+        "Prime Export",
+        "Domestic Premium",
+        "Standard Retail",
+        "Everyday Retail",
+        "Commercial",
+        "Value",
+        "Processing",
+        "Reject"
+      ],
+      "classGroup": [
+        "Export Quality (EXP)",
+        "Export Quality (EXP)",
+        "Domestic Premium (DOM)",
+        "Retail Standard (RET)",
+        "Retail Standard (RET)",
+        "Commercial (COM)",
+        "Commercial (COM)",
+        "Non-Market (NMR)",
+        "Non-Market (NMR)"
+      ],
+      "groupOrder": [
+        "Export Quality (EXP)",
+        "Domestic Premium (DOM)",
+        "Retail Standard (RET)",
+        "Commercial (COM)",
+        "Non-Market (NMR)",
+        "Custom"
+      ]
+    }
+  }
+}

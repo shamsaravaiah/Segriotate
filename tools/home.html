@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Segri-Labs</title>
+<link rel="icon" type="image/png" href="/icon.png">
+<link rel="stylesheet" href="/labs.css">
+<style>
+  body { overflow: hidden; height: 100vh; display: flex; flex-direction: column; }
+  .home {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 40px 24px 72px;
+  }
+  .lede { text-align: center; max-width: 520px; margin-bottom: 36px; }
+  .lede .home-logo {
+    width: 88px; height: 88px; border-radius: 20px; display: block; margin: 0 auto 18px;
+  }
+  .lede h2 { margin: 0 0 8px; font-size: 28px; font-weight: 600; letter-spacing: -0.02em; }
+  .lede p { margin: 0; color: var(--text-dim); font-size: 14px; line-height: 1.55; }
+  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; width: min(760px, 100%); }
+  .card {
+    display: block; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 28px 24px 24px; min-height: 210px;
+    transition: border-color .12s, background .12s;
+  }
+  .card:hover { border-color: var(--accent); background: #1d2229; }
+  .card .kicker {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.1em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 10px;
+  }
+  .card h3 { margin: 0 0 10px; font-size: 20px; font-weight: 600; }
+  .card p { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.55; }
+  @media (max-width: 720px) { .cards { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+  <div class="app-bar">
+    <img class="app-logo" src="/icon.png" width="22" height="22" alt="">
+    <h1>SEGRI-LABS</h1>
+    <a class="nav-link active" href="/">Home</a>
+    <a class="nav-link" href="/annotate">Annotate</a>
+    <a class="nav-link" href="/train">Train</a>
+  </div>
+  <div class="home">
+    <div class="lede">
+      <img class="home-logo" src="/icon.png" width="88" height="88" alt="Segri-Labs">
+      <h2>What do you want to do?</h2>
+      <p>Label images, then train a YOLO segmentation model on the dataset you just created — or on another train/val/test folder.</p>
+    </div>
+    <div class="cards">
+      <a class="card" href="/annotate">
+        <div class="kicker">01</div>
+        <h3>Annotate</h3>
+        <p>Open a folder of images, draw or detect masks, lock classes, and export a train / val / test dataset.</p>
+      </a>
+      <a class="card" href="/train">
+        <div class="kicker">02</div>
+        <h3>Train</h3>
+        <p>Use the last dataset from Annotate, or pick another folder with data.yaml. Choose weights and run training.</p>
+      </a>
+    </div>
+  </div>
+</body>
+</html>

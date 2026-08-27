@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Segriotate desktop launcher (PyQt).
+Segri-Labs desktop launcher (PyQt).
 
 Starts the local Flask server in the background, opens a native Qt window
-with the HTML editor, and shuts everything down when the window is closed.
+with Home / Annotate / Train, and shuts everything down when the window is closed.
 
     python desktop_app.py
 """
@@ -53,7 +53,7 @@ SPLASH_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Segriotate</title>
+<title>Segri-Labs</title>
 <style>
   html, body {
     margin: 0; height: 100%;
@@ -62,15 +62,19 @@ SPLASH_HTML = """<!DOCTYPE html>
     display: flex; align-items: center; justify-content: center;
   }
   .box { text-align: center; max-width: 420px; padding: 32px; }
+  .logo {
+    width: 88px; height: 88px; border-radius: 20px;
+    display: block; margin: 0 auto 18px;
+  }
   h1 { font-size: 22px; font-weight: 600; letter-spacing: 0.02em; margin: 0 0 8px; }
   p { color: #8b909c; font-size: 14px; line-height: 1.5; margin: 0; }
   #status { margin-top: 14px; color: #5eead4; font-size: 13px; min-height: 1.4em; }
   .spinner {
-    width: 42px; height: 42px;
+    width: 28px; height: 28px;
     border: 3px solid #2a2e36;
     border-top-color: #5eead4;
     border-radius: 50%;
-    margin: 0 auto 22px;
+    margin: 18px auto 0;
     animation: spin 0.85s linear infinite;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -78,10 +82,11 @@ SPLASH_HTML = """<!DOCTYPE html>
 </head>
 <body>
   <div class="box">
-    <div class="spinner"></div>
-    <h1>Launching app.</h1>
+    <img class="logo" src="segriotate_icon_1024.png" width="88" height="88" alt="Segri-Labs">
+    <h1>Launching Segri-Labs.</h1>
     <p>Please wait</p>
     <p id="status">Checking for models…</p>
+    <div class="spinner"></div>
   </div>
 </body>
 </html>
@@ -90,8 +95,8 @@ SPLASH_HTML = """<!DOCTYPE html>
 FAIL_HTML = """<!DOCTYPE html>
 <html lang="en">
 <body style="background:#14161a;color:#f97362;font-family:sans-serif;padding:40px">
-  <h1>Segriotate failed to start</h1>
-  <p>The local server did not become ready. Check the terminal or <code>segriotate.log</code>.
+  <h1>Segri-Labs failed to start</h1>
+  <p>The local server did not become ready. Check the terminal or <code>workspace/logs/segriotate.log</code>.
   First launch downloads FastSAM / MobileSAM into <code>models/dot-pt/</code>
   and can build TensorRT engines from those <code>.pt</code> files. That can take several minutes.</p>
 </body>
@@ -162,11 +167,23 @@ class Bridge(QObject):
     def pick_dataset_folder(self) -> str:
         return self._window.pick_dataset_folder_json()
 
+    @pyqtSlot(str, result=str)
+    def pick_folder(self, title: str) -> str:
+        return self._window.pick_folder_json(title)
+
+    @pyqtSlot(result=str)
+    def pick_weights_file(self) -> str:
+        return self._window.pick_weights_file_json()
+
+    @pyqtSlot(result=str)
+    def pick_yaml_file(self) -> str:
+        return self._window.pick_yaml_file_json()
+
 
 class MainWindow(QMainWindow):
     def __init__(self, already_running: bool):
         super().__init__()
-        self.setWindowTitle("Segriotate")
+        self.setWindowTitle("Segri-Labs")
         self.resize(1440, 900)
         self.setMinimumSize(960, 640)
         self.setStyleSheet("background: #14161a;")
@@ -197,15 +214,17 @@ class MainWindow(QMainWindow):
         self._make_menu()
         self.view.loadFinished.connect(self._on_load_finished)
         self._labels_chosen = False
-        self._last_labels_dir = str(ROOT / "labels")
+        self._last_labels_dir = str(ROOT / "workspace" / "labels")
         self._last_images_dir = str(ROOT)
         self._last_dataset_dir = str(ROOT)
+        self._last_weights_dir = str(ROOT / "models")
 
         self._deadline = time.time() + 3600
         if already_running:
             self.view.setUrl(QUrl(BASE + "/"))
         else:
-            self.view.setHtml(SPLASH_HTML)
+            icon_dir = ROOT / "Segriotate.app" / "Contents" / "Resources"
+            self.view.setHtml(SPLASH_HTML, QUrl.fromLocalFile(str(icon_dir) + "/"))
             self._poll = QTimer(self)
             self._poll.timeout.connect(self._check_server)
             self._poll.start(400)
@@ -251,11 +270,36 @@ class MainWindow(QMainWindow):
         quit_act.triggered.connect(QApplication.instance().quit)
         file_menu.addAction(quit_act)
 
-    def _on_load_finished(self, ok):
+        go = self.menuBar().addMenu("&Go")
+        home_act = QAction("Home", self)
+        home_act.triggered.connect(lambda: self.view.setUrl(QUrl(BASE + "/")))
+        go.addAction(home_act)
+        annotate_act = QAction("Annotate", self)
+        annotate_act.triggered.connect(lambda: self.view.setUrl(QUrl(BASE + "/annotate")))
+        go.addAction(annotate_act)
+        train_act = QAction("Train", self)
+        train_act.triggered.connect(lambda: self.view.setUrl(QUrl(BASE + "/train")))
+        go.addAction(train_act)
+
+    def _page_kind(self) -> str:
         url = self.view.url().toString()
-        editor_ready = bool(ok) and url.startswith(BASE)
-        self._open_act.setEnabled(editor_ready)
-        self._labels_act.setEnabled(editor_ready)
+        if "/annotate" in url:
+            return "annotate"
+        if "/train" in url:
+            return "train"
+        return "home"
+
+    def _on_load_finished(self, ok):
+        kind = self._page_kind()
+        titles = {
+            "annotate": "Segri-Labs — Annotate",
+            "train": "Segri-Labs — Train",
+            "home": "Segri-Labs",
+        }
+        self.setWindowTitle(titles.get(kind, "Segri-Labs"))
+        on_annotate = bool(ok) and kind == "annotate"
+        self._open_act.setEnabled(on_annotate)
+        self._labels_act.setEnabled(on_annotate)
 
     def _choose_directory(self, title: str, start: str | None = None) -> str:
         dialog = QFileDialog(self, title)
@@ -333,7 +377,7 @@ class MainWindow(QMainWindow):
         data = json.loads(self.pick_images_folder_json())
         if not data.get("ok"):
             if data.get("error"):
-                QMessageBox.warning(self, "Segriotate", data["error"])
+                QMessageBox.warning(self, "Segri-Labs", data["error"])
             return
         files_js = json.dumps(data["files"])
         dir_js = json.dumps(data["dir"])
@@ -360,14 +404,41 @@ class MainWindow(QMainWindow):
         return json.dumps({"ok": True, "dir": str(saved)})
 
     def pick_dataset_folder_json(self) -> str:
+        return self.pick_folder_json("Choose folder for train / val / test dataset")
+
+    def pick_folder_json(self, title: str) -> str:
         folder = self._choose_directory(
-            "Choose folder for train / val / test dataset",
+            title or "Choose folder",
             self._last_dataset_dir,
         )
         if not folder:
             return json.dumps({"ok": False})
         self._last_dataset_dir = folder
-        return json.dumps({"ok": True, "dir": folder})
+        return json.dumps({"ok": True, "dir": folder, "path": folder})
+
+    def pick_weights_file_json(self) -> str:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose YOLO weights",
+            self._last_weights_dir,
+            "YOLO weights (*.pt);;All files (*)",
+        )
+        if not path:
+            return json.dumps({"ok": False})
+        self._last_weights_dir = str(Path(path).parent)
+        return json.dumps({"ok": True, "path": path})
+
+    def pick_yaml_file_json(self) -> str:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose data.yaml",
+            self._last_dataset_dir,
+            "YAML files (*.yaml *.yml);;All files (*)",
+        )
+        if not path:
+            return json.dumps({"ok": False})
+        self._last_dataset_dir = str(Path(path).parent)
+        return json.dumps({"ok": True, "path": path})
 
     def _notify_labels_dir(self, folder: str):
         dir_js = json.dumps(folder)
@@ -381,7 +452,7 @@ class MainWindow(QMainWindow):
         data = json.loads(self.pick_labels_folder_json())
         if not data.get("ok"):
             if data.get("error"):
-                QMessageBox.warning(self, "Segriotate", data["error"])
+                QMessageBox.warning(self, "Segri-Labs", data["error"])
             return
         self._notify_labels_dir(data["dir"])
 
@@ -402,6 +473,8 @@ def _windows_app_id() -> None:
 def _app_icon() -> QIcon:
     ico = ROOT / "Segriotate.ico"
     png = ROOT / "Segriotate.app" / "Contents" / "Resources" / "segriotate_icon_1024.png"
+    if sys.platform == "darwin" and png.is_file():
+        return QIcon(str(png))
     if ico.is_file():
         return QIcon(str(ico))
     if png.is_file():
@@ -410,12 +483,18 @@ def _app_icon() -> QIcon:
 
 
 def main():
+    if len(sys.argv) >= 2 and sys.argv[1] == "--run-training":
+        sys.path.insert(0, str(ROOT / "labs" / "train"))
+        from training_runner import main as train_main
+        sys.argv = [sys.argv[0], *sys.argv[2:]]
+        raise SystemExit(train_main())
+
     _windows_app_id()
     already = probe_health()
     if already and already.get("app") != "segriotate":
         sys.exit(
             f"Port {PORT} is already in use (probably an old python scripts/segment_server.py).\n"
-            "Stop that process with Ctrl+C, then start Segriotate again."
+            "Stop that process with Ctrl+C, then start Segri-Labs again."
         )
     flask_up = bool(already) and already.get("app") == "segriotate"
     if not flask_up:
@@ -427,7 +506,7 @@ def main():
     except AttributeError:
         pass
     app = QApplication(sys.argv)
-    app.setApplicationName("Segriotate")
+    app.setApplicationName("Segri-Labs")
     icon = _app_icon()
     if not icon.isNull():
         app.setWindowIcon(icon)

@@ -1,4 +1,5 @@
-# Segriotate
+# SegriLabs
+
 
 <p align="center">
   <img src="Segriotate.app/Contents/Resources/segriotate_icon_1024.png" alt="Segriotate icon" width="160">

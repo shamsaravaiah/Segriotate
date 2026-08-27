@@ -1,13 +1,15 @@
 """
-Local inference + UI server for Segriotate.
+Local inference + UI server for Segri-Labs.
 
-1. /          -- the label editor (HTML)
-2. /detect    -- YOLO segmentation.pt on the current image
-3. /segment   -- click-to-segment fallback (.pt or .engine: FastSAM, MobileSAM, …)
-4. /label     -- read/write YOLO .txt files in labels/
-5. /project/label-stats -- mask/image counts per class in the labels folder
-6. /project/split-dataset -- copy train/val/test (+ CSV) from the open folders
-7. /media     -- serve images from the chosen images folder
+1. /          -- home (Annotate or Train)
+2. /annotate  -- the label editor (HTML)
+3. /train     -- YOLO training UI
+4. /detect    -- YOLO segmentation.pt on the current image
+5. /segment   -- click-to-segment fallback (.pt or .engine: FastSAM, MobileSAM, …)
+6. /label     -- read/write YOLO .txt files in labels/
+7. /project/split-dataset -- copy train/val/test (+ CSV) from the open folders
+8. /project/train/* -- start/stop/poll training jobs
+9. /media     -- serve images from the chosen images folder
 
 Usage (browser):
     python scripts/segment_server.py
@@ -31,8 +33,9 @@ sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_HERE))
 import config  # noqa: E402
 
-os.chdir(config.PROJECT_ROOT)
-
+_TRAIN_DIR = config.PROJECT_ROOT / "labs" / "train"
+if str(_TRAIN_DIR) not in sys.path:
+    sys.path.insert(0, str(_TRAIN_DIR))
 from flask import Flask, abort, jsonify, request, send_from_directory  # noqa: E402
 from flask_cors import CORS  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -40,6 +43,13 @@ from PIL import Image  # noqa: E402
 from ensure_models import ensure_models  # noqa: E402
 from build_engines import ensure_engines  # noqa: E402
 from split_yolo_dataset import split_dataset  # noqa: E402
+from last_dataset import load_last_dataset, save_last_dataset  # noqa: E402
+from dataset_utils import inspect_dataset_root, validate_dataset  # noqa: E402
+from schemas import DatasetConfig, TrainConfig  # noqa: E402
+from job_manager import job_manager  # noqa: E402
+from model_registry import detect_devices, list_model_groups  # noqa: E402
+from app_paths import default_runs_dir  # noqa: E402
+import presets as train_presets  # noqa: E402
 
 PORT = getattr(config, "SERVER_PORT", 8765)
 PT_DIR = config.PROJECT_ROOT / "models" / "dot-pt"
@@ -47,13 +57,21 @@ ENGINE_DIR = config.PROJECT_ROOT / "models" / "dot-engine"
 CLICK_FORMATS = ("pt", "engine")
 DEFAULT_CLICK_FORMAT = "pt"
 CLICK_SKIP_STEMS = {"segmentation"}  # Auto-Detect YOLO, not a click model
-CLICK_LABELS = {
+CLICK_LABELS = getattr(config, "CLICK_MODEL_LABELS", {
     "FastSAM-s": "FastSAM",
     "FastSAM-x": "FastSAM-x",
     "mobile_sam": "MobileSAM",
-}
+})
 TOOLS_DIR = config.PROJECT_ROOT / "tools"
 VENDOR_DIR = TOOLS_DIR / "vendor"
+ICON_PNG = (
+    config.PROJECT_ROOT
+    / "Segriotate.app"
+    / "Contents"
+    / "Resources"
+    / "segriotate_icon_1024.png"
+)
+ICON_ICO = config.PROJECT_ROOT / "Segriotate.ico"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
 LABEL_SIDECAR_STEMS = {"class_profile", "classes"}
 CLASS_PROFILES_PATH = getattr(
@@ -145,17 +163,21 @@ start_boot_thread()
 
 
 def paired_labels_dir(images_folder: Path) -> Path:
-    """labels/<folder-name>_labels under the project root (e.g. batch001 → labels/batch001_labels)."""
+    """Pair an image folder with workspace/labels/<name>_labels (or an older labels/ folder)."""
     name = images_folder.name.strip() or "images"
     if name in {".", ".."}:
         name = "images"
-    labels_root = config.PROJECT_ROOT / "labels"
-    dest = (labels_root / f"{name}_labels").resolve()
-    legacy = (labels_root / f"{name}-labels").resolve()
-    # Keep using an existing hyphen folder from older app versions.
-    if not dest.exists() and legacy.is_dir():
-        return legacy
-    return dest
+    candidates = [
+        config.LABELS_ROOT / f"{name}_labels",
+        config.LABELS_ROOT / f"{name}-labels",
+        config.LEGACY_LABELS_ROOT / f"{name}_labels",
+        config.LEGACY_LABELS_ROOT / f"{name}-labels",
+    ]
+    for path in candidates:
+        resolved = path.resolve()
+        if resolved.is_dir():
+            return resolved
+    return (config.LABELS_ROOT / f"{name}_labels").resolve()
 
 
 def set_images_dir(path: str | Path) -> Path:
@@ -297,10 +319,17 @@ def read_class_profiles() -> dict:
 
 def write_class_profiles(data: dict) -> None:
     """Write via a temp file so an interrupted save cannot truncate the profiles."""
-    CLASS_PROFILES_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = CLASS_PROFILES_PATH.with_name(CLASS_PROFILES_PATH.name + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-    os.replace(tmp, CLASS_PROFILES_PATH)
+    payload = json.dumps(data, indent=2) + "\n"
+
+    def _atomic(path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        os.replace(tmp, path)
+
+    _atomic(CLASS_PROFILES_PATH)
+    # Keep the old project-root copy in sync so git/backups still see it.
+    _atomic(config.LEGACY_CLASS_PROFILES_PATH)
 
 
 def clean_class_profile(value) -> dict | None:
@@ -509,7 +538,36 @@ def click_models():
 def index():
     if not _boot["ready"]:
         return send_from_directory(TOOLS_DIR, "launching.html")
+    return send_from_directory(TOOLS_DIR, "home.html")
+
+
+@app.route("/annotate")
+def annotate():
+    if not _boot["ready"]:
+        return send_from_directory(TOOLS_DIR, "launching.html")
     return send_from_directory(TOOLS_DIR, "label_editor.html")
+
+
+@app.route("/train")
+def train_page():
+    return send_from_directory(TOOLS_DIR, "trainer.html")
+
+
+@app.route("/labs.css")
+def labs_css():
+    return send_from_directory(TOOLS_DIR, "labs.css")
+
+
+@app.route("/icon.png")
+def app_icon_png():
+    return send_from_directory(ICON_PNG.parent, ICON_PNG.name)
+
+
+@app.route("/favicon.ico")
+def favicon():
+    if ICON_ICO.is_file():
+        return send_from_directory(ICON_ICO.parent, ICON_ICO.name)
+    return send_from_directory(ICON_PNG.parent, ICON_PNG.name)
 
 
 @app.route("/vendor/<path:filename>")
@@ -651,7 +709,186 @@ def project_split_dataset():
         )
     except (ValueError, OSError) as e:
         return jsonify({"error": str(e)}), 400
+    save_last_dataset({
+        "root": result.get("out"),
+        "yaml": result.get("yaml"),
+        "counts": result.get("counts"),
+        "labelled": result.get("labelled"),
+        "csv": result.get("csv"),
+    })
     return jsonify(result)
+
+
+def _job_payload(job, since: int = 0) -> dict:
+    logs = job.logs[since:] if since else job.logs[-500:]
+    return {
+        "job_id": job.job_id,
+        "state": job.state,
+        "progress": job.progress,
+        "output_dir": job.output_dir,
+        "error": job.error,
+        "logs": logs,
+        "log_count": len(job.logs),
+    }
+
+
+@app.route("/project/train/models")
+def train_models():
+    groups = list_model_groups()
+    return jsonify({
+        "groups": groups,
+        "models": [m for g in groups for m in g["models"]],
+    })
+
+
+@app.route("/project/train/devices")
+def train_devices():
+    return jsonify({"devices": detect_devices()})
+
+
+@app.route("/project/train/runtime")
+def train_runtime():
+    return jsonify({
+        "platform": sys.platform,
+        "project": str(default_runs_dir()),
+        "workers": 0,
+    })
+
+
+@app.route("/project/train/validate", methods=["POST", "OPTIONS"])
+def train_validate():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        dataset = DatasetConfig(**data)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "issues": []}), 400
+    result = validate_dataset(dataset)
+    return jsonify(result.model_dump())
+
+
+@app.route("/project/train/presets", methods=["GET", "POST", "OPTIONS"])
+def train_presets_collection():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if request.method == "GET":
+        return jsonify({"presets": train_presets.list_presets()})
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("name") or "").strip()
+    config_data = data.get("config")
+    if not name or not isinstance(config_data, dict):
+        return jsonify({"error": "name and config are required"}), 400
+    try:
+        cfg = TrainConfig(**config_data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    train_presets.save_preset(name, cfg.model_dump())
+    return jsonify({"saved": True})
+
+
+@app.route("/project/train/presets/<name>", methods=["GET", "DELETE", "OPTIONS"])
+def train_preset_item(name):
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if request.method == "DELETE":
+        train_presets.delete_preset(name)
+        return jsonify({"deleted": True})
+    try:
+        return jsonify(train_presets.load_preset(name))
+    except FileNotFoundError:
+        return jsonify({"error": "Preset not found"}), 404
+
+
+@app.route("/project/train/last-dataset")
+def train_last_dataset():
+    info = load_last_dataset()
+    if not info:
+        return jsonify({"ok": False, "last": None})
+    yaml_path = (info.get("yaml") or "").strip()
+    root = (info.get("root") or "").strip()
+    inspect_root = None
+    if yaml_path and Path(yaml_path).is_file():
+        inspect_root = Path(yaml_path).parent
+    elif root:
+        inspect_root = Path(root)
+    inspected = inspect_dataset_root(inspect_root) if inspect_root else {"ok": False}
+    return jsonify({"ok": bool(inspected.get("ok")), "last": info, "inspect": inspected})
+
+
+@app.route("/project/train/inspect", methods=["POST", "OPTIONS"])
+def train_inspect():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    data = request.get_json(force=True, silent=True) or {}
+    root = (data.get("root") or "").strip()
+    if not root:
+        return jsonify({"ok": False, "error": "choose a dataset folder"}), 400
+    result = inspect_dataset_root(root)
+    return jsonify(result), (200 if result.get("ok") else 400)
+
+
+@app.route("/project/train/start", methods=["POST", "OPTIONS"])
+def train_start():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    data = request.get_json(force=True, silent=True) or {}
+    try:
+        cfg = TrainConfig(**data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 400
+    if cfg.dataset.dataset_root and not cfg.dataset.use_raw_yaml:
+        yaml_path = Path(cfg.dataset.dataset_root) / "data.yaml"
+        if yaml_path.is_file():
+            cfg.dataset.use_raw_yaml = True
+            cfg.dataset.raw_yaml_path = str(yaml_path)
+    validation = validate_dataset(cfg.dataset)
+    if not validation.ok:
+        return jsonify({
+            "error": "Dataset validation failed",
+            "issues": [i.model_dump() for i in validation.issues],
+        }), 400
+    if not Path(cfg.base_model_path).is_file():
+        return jsonify({"error": f"weights not found: {cfg.base_model_path}"}), 400
+    if not (cfg.project or "").strip() or cfg.project.strip() == "runs":
+        cfg.project = str(default_runs_dir())
+    job_id = job_manager.submit(cfg)
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/project/train/jobs")
+def train_jobs():
+    return jsonify({
+        "jobs": [
+            {
+                "job_id": j.job_id,
+                "state": j.state,
+                "progress": j.progress,
+                "output_dir": j.output_dir,
+                "error": j.error,
+            }
+            for j in job_manager.list_jobs()
+        ]
+    })
+
+
+@app.route("/project/train/jobs/<job_id>")
+def train_job(job_id):
+    job = job_manager.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+    since = request.args.get("since", default=0, type=int) or 0
+    return jsonify(_job_payload(job, since))
+
+
+@app.route("/project/train/jobs/<job_id>/stop", methods=["POST", "OPTIONS"])
+def train_stop(job_id):
+    if request.method == "OPTIONS":
+        return ("", 204)
+    ok = job_manager.stop(job_id)
+    if not ok:
+        return jsonify({"error": "Job not running or not found"}), 400
+    return jsonify({"stopped": True})
 
 
 @app.route("/project/label-stats", methods=["GET", "OPTIONS"])
@@ -770,6 +1007,6 @@ def segment():
 
 
 if __name__ == "__main__":
-    print(f"Segriotate running on http://127.0.0.1:{PORT}")
+    print(f"Segri-Labs running on http://127.0.0.1:{PORT}")
     print("Open that URL in a browser, or run: python desktop_app.py\n")
     app.run(host="127.0.0.1", port=PORT, threaded=True, use_reloader=False)

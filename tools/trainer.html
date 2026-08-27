@@ -1,0 +1,919 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Segri-Labs — Train</title>
+<link rel="icon" type="image/png" href="/icon.png">
+<link rel="stylesheet" href="/labs.css">
+<style>
+  html, body { height: 100%; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  .app-shell {
+    flex: 1; min-height: 0;
+    display: grid; grid-template-columns: 240px 1fr;
+  }
+  .sidebar {
+    background: var(--panel); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; padding: 14px 12px 16px; overflow-y: auto;
+  }
+  .steps { display: flex; flex-direction: column; gap: 2px; margin-bottom: 14px; }
+  .step {
+    display: flex; align-items: center; gap: 10px;
+    background: transparent; border: none; color: var(--text-dim);
+    padding: 9px 10px; border-radius: 5px; cursor: pointer;
+    text-align: left; font-size: 13px; font-weight: 600; width: 100%;
+  }
+  .step:hover { background: var(--panel-2); color: var(--text); border-color: transparent; }
+  .step.active { background: var(--accent-dim); color: var(--accent); border-color: transparent; }
+  .step-num { font-family: var(--mono); font-size: 10px; color: var(--text-faint); width: 20px; }
+  .step.active .step-num { color: var(--accent); }
+  .sidebar-section {
+    border-top: 1px solid var(--border); padding-top: 12px; margin-top: 6px;
+  }
+  .sidebar-section.grow { flex: 1; overflow-y: auto; min-height: 80px; }
+  .sidebar-row { display: flex; gap: 6px; margin-top: 8px; }
+  .sidebar-row button { flex: 1; }
+  .job-list { display: flex; flex-direction: column; gap: 6px; }
+  .job-list-empty { color: var(--text-faint); font-size: 12px; }
+  .job-item {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 8px; border-radius: 5px; background: var(--panel-2);
+    cursor: pointer; font-size: 12px; font-family: var(--mono); color: var(--text-dim);
+    border: 1px solid transparent;
+  }
+  .job-item:hover, .job-item.on { border-color: var(--accent); color: var(--text); }
+  .job-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; background: var(--text-faint); }
+  .job-dot.running, .job-dot.queued { background: var(--accent); }
+  .job-dot.completed { background: var(--accent); }
+  .job-dot.failed { background: var(--danger); }
+
+  .main {
+    display: flex; flex-direction: column; min-width: 0; min-height: 0;
+    padding: 18px 22px 16px; gap: 12px; background: var(--bg);
+  }
+  .panel {
+    display: none; flex-direction: column; gap: 14px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    padding: 20px 22px; overflow-y: auto; min-height: 0; flex: 1 1 auto;
+  }
+  .panel.active { display: flex; }
+  .panel-header h2 {
+    font-size: 18px; font-weight: 600; margin: 0 0 4px; letter-spacing: -0.02em;
+  }
+  .panel-header p { margin: 0; color: var(--text-dim); font-size: 13px; line-height: 1.45; }
+  .train-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 0; }
+  .train-field > label {
+    display: block; font-size: 11px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-faint); margin: 0;
+  }
+  .help-text { margin: 0; font-size: 12px; color: var(--text-dim); line-height: 1.45; }
+  .field-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+  .path-field { display: flex; gap: 6px; align-items: stretch; }
+  .path-field input { flex: 1; min-width: 0; }
+  .path-field button { flex-shrink: 0; white-space: nowrap; }
+  .switch-label {
+    display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text); cursor: pointer;
+  }
+  .switch-label input { width: auto; }
+  .divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+  .class-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .class-table th {
+    text-align: left; color: var(--text-faint); font-weight: 700; font-size: 10px;
+    text-transform: uppercase; letter-spacing: 0.06em; padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .class-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); }
+  .class-table .id-cell { font-family: var(--mono); color: var(--text-faint); width: 40px; }
+  .remove-class-btn {
+    background: none; border: none; color: var(--text-faint); cursor: pointer;
+    font-size: 14px; padding: 0 4px; font-weight: 400;
+  }
+  .remove-class-btn:hover { color: var(--danger); background: transparent; border: none; }
+  .status-pill {
+    font-family: var(--mono); font-size: 11px; padding: 3px 9px; border-radius: 20px;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    border: 1px solid var(--border); color: var(--text-dim);
+  }
+  .status-idle { background: var(--panel-2); color: var(--text-dim); }
+  .status-ok { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+  .status-error { color: var(--danger); border-color: var(--danger); }
+  .status-running { background: var(--accent-dim); color: var(--accent); border-color: var(--accent); }
+  .issues-box { display: flex; flex-direction: column; gap: 6px; }
+  .issue {
+    font-size: 12.5px; padding: 8px 10px; border-radius: 5px;
+    border-left: 3px solid var(--border); background: var(--panel-2);
+  }
+  .issue.error { border-color: var(--danger); }
+  .issue.warning { border-color: var(--accent); }
+  .review-json {
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 5px;
+    padding: 14px; font-family: var(--mono); font-size: 12px; color: var(--text-dim);
+    overflow: auto; max-height: 280px; margin: 0;
+  }
+  .wizard-nav { display: flex; justify-content: space-between; flex-shrink: 0; }
+  .console {
+    background: #0c0d10; border: 1px solid var(--border); border-radius: 6px;
+    display: flex; flex-direction: column; flex: 0 0 28%; min-height: 160px;
+  }
+  .console-header {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    border-bottom: 1px solid var(--border); background: var(--panel);
+  }
+  .console-title {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--text-faint);
+  }
+  .console-job-id { font-family: var(--mono); font-size: 11px; color: var(--text-dim); }
+  .console-actions { margin-left: auto; display: flex; gap: 6px; }
+  .console-progress {
+    display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .progress-track {
+    flex: 1; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%; width: 0; background: var(--accent); border-radius: 2px;
+  }
+  .progress-text { font-family: var(--mono); font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+  .console-body {
+    flex: 1; overflow-y: auto; padding: 10px 14px; margin: 0;
+    font-family: var(--mono); font-size: 11.5px; line-height: 1.55; color: #c8cdc6;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  @media (max-width: 900px) {
+    .app-shell { grid-template-columns: 1fr; }
+    .sidebar { display: none; }
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <div class="app-bar">
+    <img class="app-logo" src="/icon.png" width="22" height="22" alt="">
+    <h1>SEGRI-LABS</h1>
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link" href="/annotate">Annotate</a>
+    <a class="nav-link active" href="/train">Train</a>
+  </div>
+
+  <div class="app-shell">
+    <aside class="sidebar">
+      <nav class="steps" id="step-nav">
+        <button type="button" class="step active" data-step="model">
+          <span class="step-num">01</span><span class="step-label">Base Model</span>
+        </button>
+        <button type="button" class="step" data-step="dataset">
+          <span class="step-num">02</span><span class="step-label">Dataset</span>
+        </button>
+        <button type="button" class="step" data-step="hyperparams">
+          <span class="step-num">03</span><span class="step-label">Hyperparameters</span>
+        </button>
+        <button type="button" class="step" data-step="augment">
+          <span class="step-num">04</span><span class="step-label">Augmentation</span>
+        </button>
+        <button type="button" class="step" data-step="review">
+          <span class="step-num">05</span><span class="step-label">Review &amp; Run</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-section">
+        <div class="section-title">Presets</div>
+        <select id="preset-select"></select>
+        <div class="sidebar-row">
+          <button type="button" class="small" id="load-preset-btn">Load</button>
+          <button type="button" class="small" id="save-preset-btn">Save as…</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section grow">
+        <div class="section-title">Jobs</div>
+        <div id="job-list" class="job-list">
+          <div class="job-list-empty">No jobs yet</div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="panel step-panel active" id="panel-model">
+        <header class="panel-header">
+          <h2>Base Model</h2>
+          <p>Pick starting weights from Annotate (<code>models/dot-pt</code>) or a previous Train run.</p>
+        </header>
+        <div class="train-field">
+          <label>Models</label>
+          <select id="model-select"></select>
+        </div>
+        <div class="train-field">
+          <label>Or a custom .pt path</label>
+          <div class="path-field">
+            <input type="text" id="model-path-input" placeholder="/path/to/weights.pt">
+            <button type="button" class="browse-btn" data-browse="file" data-kind="weights" data-target="model-path-input">Browse…</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel step-panel" id="panel-dataset">
+        <header class="panel-header">
+          <h2>Dataset</h2>
+          <p>Use the last split from Annotate, or point at another train/val/test folder.</p>
+        </header>
+        <div class="field-row">
+          <button type="button" id="use-last-dataset-btn">Use last from Annotate</button>
+          <span id="last-dataset-hint" class="help-text"></span>
+        </div>
+        <label class="switch-label">
+          <input type="checkbox" id="use-raw-yaml-toggle">
+          Use an existing data.yaml
+        </label>
+        <div id="raw-yaml-block" class="train-field hidden">
+          <label>Path to data.yaml</label>
+          <div class="path-field">
+            <input type="text" id="raw-yaml-path" placeholder="/path/to/data.yaml">
+            <button type="button" class="browse-btn" data-browse="file" data-kind="yaml" data-target="raw-yaml-path">Browse…</button>
+          </div>
+        </div>
+        <div id="form-dataset-block">
+          <div class="train-field">
+            <label>Dataset root folder</label>
+            <div class="path-field">
+              <input type="text" id="dataset-root-input" placeholder="Folder with images/train or train/images">
+              <button type="button" class="browse-btn" data-browse="folder" data-target="dataset-root-input">Browse…</button>
+            </div>
+            <p class="help-text">Segriotate export: images/train · val · test. Also accepts train/images + val/images.</p>
+          </div>
+          <div class="train-field">
+            <label>Classes</label>
+            <table class="class-table" id="class-table">
+              <thead><tr><th>ID</th><th>Class name</th><th></th></tr></thead>
+              <tbody id="class-table-body"></tbody>
+            </table>
+            <button type="button" class="small" id="add-class-btn">+ Add class</button>
+          </div>
+        </div>
+        <div class="field-row">
+          <button type="button" class="primary" id="validate-dataset-btn">Validate dataset</button>
+          <span id="validate-status" class="status-pill hidden"></span>
+        </div>
+        <div id="validation-issues" class="issues-box hidden"></div>
+      </section>
+
+      <section class="panel step-panel" id="panel-hyperparams">
+        <header class="panel-header">
+          <h2>Hyperparameters</h2>
+          <p>Core training settings.</p>
+        </header>
+        <div class="grid-2">
+          <div class="train-field"><label>Epochs</label><input type="number" id="hp-epochs" value="20"></div>
+          <div class="train-field"><label>Image size</label><input type="number" id="hp-imgsz" value="640"></div>
+          <div class="train-field"><label>Batch size</label><input type="number" id="hp-batch" value="8"></div>
+          <div class="train-field"><label>Workers</label><input type="number" id="hp-workers" value="0"></div>
+          <div class="train-field"><label>Device</label><select id="hp-device"></select></div>
+          <div class="train-field">
+            <label>Optimizer</label>
+            <select id="hp-optimizer">
+              <option value="auto">auto</option>
+              <option value="SGD">SGD</option>
+              <option value="Adam">Adam</option>
+              <option value="AdamW">AdamW</option>
+            </select>
+          </div>
+          <div class="train-field"><label>lr0 (initial LR)</label><input type="number" step="0.0001" id="hp-lr0" value="0.003"></div>
+          <div class="train-field"><label>lrf (final LR fraction)</label><input type="number" step="0.0001" id="hp-lrf" value="0.0003"></div>
+          <div class="train-field"><label>Patience (0 = disabled)</label><input type="number" id="hp-patience" value="0"></div>
+          <div class="train-field"><label>Seed</label><input type="number" id="hp-seed" value="42"></div>
+          <div class="train-field">
+            <label>Project folder</label>
+            <div class="path-field">
+              <input type="text" id="hp-project" value="runs">
+              <button type="button" class="browse-btn" data-browse="folder" data-target="hp-project">Browse…</button>
+            </div>
+          </div>
+          <div class="train-field"><label>Run name</label><input type="text" id="hp-name" value="run"></div>
+        </div>
+        <div class="train-field">
+          <label>Resume from checkpoint (optional)</label>
+          <div class="path-field">
+            <input type="text" id="hp-resume" placeholder="/path/to/last.pt">
+            <button type="button" class="browse-btn" data-browse="file" data-kind="weights" data-target="hp-resume">Browse…</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel step-panel" id="panel-augment">
+        <header class="panel-header">
+          <h2>Augmentation</h2>
+          <p>Defaults assume a fixed camera — geometric augmentation off.</p>
+        </header>
+        <div class="grid-2">
+          <div class="train-field"><label>degrees</label><input type="number" step="0.1" id="aug-degrees" value="0.0"></div>
+          <div class="train-field"><label>translate</label><input type="number" step="0.01" id="aug-translate" value="0.0"></div>
+          <div class="train-field"><label>scale</label><input type="number" step="0.01" id="aug-scale" value="0.0"></div>
+          <div class="train-field"><label>shear</label><input type="number" step="0.1" id="aug-shear" value="0.0"></div>
+          <div class="train-field"><label>perspective</label><input type="number" step="0.0001" id="aug-perspective" value="0.0"></div>
+          <div class="train-field"><label>flipud</label><input type="number" step="0.1" id="aug-flipud" value="0.0"></div>
+          <div class="train-field"><label>fliplr</label><input type="number" step="0.1" id="aug-fliplr" value="0.0"></div>
+        </div>
+        <hr class="divider">
+        <label class="switch-label">
+          <input type="checkbox" id="glare-aug-toggle">
+          Enable glare / lighting augmentation
+        </label>
+        <div id="glare-aug-block" class="grid-2 hidden">
+          <div class="train-field"><label>hsv_h</label><input type="number" step="0.001" id="aug-hsv-h" value="0.015"></div>
+          <div class="train-field"><label>hsv_s</label><input type="number" step="0.01" id="aug-hsv-s" value="0.5"></div>
+          <div class="train-field"><label>hsv_v</label><input type="number" step="0.01" id="aug-hsv-v" value="0.4"></div>
+          <div class="train-field"><label>mosaic</label><input type="number" step="0.05" id="aug-mosaic" value="0.0"></div>
+          <div class="train-field"><label>mixup</label><input type="number" step="0.05" id="aug-mixup" value="0.0"></div>
+          <div class="train-field"><label>copy_paste</label><input type="number" step="0.05" id="aug-copy-paste" value="0.0"></div>
+        </div>
+      </section>
+
+      <section class="panel step-panel" id="panel-review">
+        <header class="panel-header">
+          <h2>Review &amp; Run</h2>
+          <p>Confirm configuration, then start training in a separate process.</p>
+        </header>
+        <pre id="review-json" class="review-json"></pre>
+        <div class="field-row">
+          <button type="button" class="primary" id="start-training-btn">Start training</button>
+        </div>
+      </section>
+
+      <div class="wizard-nav">
+        <button type="button" id="prev-step-btn">← Back</button>
+        <button type="button" id="next-step-btn">Next →</button>
+      </div>
+
+      <div class="console">
+        <div class="console-header">
+          <span class="console-title">CONSOLE</span>
+          <span id="console-job-id" class="console-job-id"></span>
+          <span id="console-status" class="status-pill status-idle">idle</span>
+          <div class="console-actions">
+            <button type="button" class="small" id="stop-job-btn">Stop</button>
+            <button type="button" class="small" id="copy-console-btn">Copy</button>
+            <button type="button" class="small" id="clear-console-btn">Clear</button>
+          </div>
+        </div>
+        <div class="console-progress hidden" id="console-progress">
+          <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+          <span class="progress-text" id="progress-text"></span>
+        </div>
+        <pre class="console-body" id="console-body"></pre>
+      </div>
+    </main>
+  </div>
+
+<script>
+(function () {
+  const STEPS = ["model", "dataset", "hyperparams", "augment", "review"];
+  let currentStepIndex = 0;
+  let classRowCounter = 0;
+  let activeJobId = null;
+  let pollTimer = null;
+  let lastRenderedLogText = "";
+  let lastDatasetMeta = null;
+
+  function $(id) { return document.getElementById(id); }
+
+  function isDesktop() {
+    return !!window.IS_DESKTOP_APP || !!window.qtBridge;
+  }
+  function waitBridge() {
+    if (window.qtBridge) return Promise.resolve(window.qtBridge);
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("desktop picker not ready")), 8000);
+      window.addEventListener("qtbridgeready", () => {
+        clearTimeout(t);
+        resolve(window.qtBridge);
+      }, { once: true });
+    });
+  }
+  function callBridge(method, arg) {
+    return waitBridge().then(bridge => new Promise((resolve, reject) => {
+      if (!bridge[method]) {
+        reject(new Error(method + " not available"));
+        return;
+      }
+      const cb = raw => {
+        try { resolve(JSON.parse(raw)); }
+        catch (e) { reject(e); }
+      };
+      if (arg === undefined) bridge[method](cb);
+      else bridge[method](arg, cb);
+    }));
+  }
+
+  function showStep(stepName) {
+    document.querySelectorAll(".step-panel").forEach(p => p.classList.remove("active"));
+    $("panel-" + stepName).classList.add("active");
+    document.querySelectorAll(".step").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.step === stepName);
+    });
+    if (stepName === "review") renderReviewJson();
+  }
+  document.querySelectorAll(".step").forEach(btn => {
+    btn.addEventListener("click", () => {
+      currentStepIndex = STEPS.indexOf(btn.dataset.step);
+      showStep(btn.dataset.step);
+    });
+  });
+  $("prev-step-btn").addEventListener("click", () => {
+    if (currentStepIndex > 0) {
+      currentStepIndex--;
+      showStep(STEPS[currentStepIndex]);
+    }
+  });
+  $("next-step-btn").addEventListener("click", () => {
+    if (currentStepIndex < STEPS.length - 1) {
+      currentStepIndex++;
+      showStep(STEPS[currentStepIndex]);
+    }
+  });
+
+  function addClassRow(name) {
+    const tbody = $("class-table-body");
+    const tr = document.createElement("tr");
+    tr.dataset.rowId = String(classRowCounter++);
+    const idCell = document.createElement("td");
+    idCell.className = "id-cell";
+    idCell.textContent = String(tbody.children.length);
+    const nameCell = document.createElement("td");
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "class-name-input";
+    input.placeholder = "class name";
+    input.value = name || "";
+    nameCell.appendChild(input);
+    const delCell = document.createElement("td");
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "remove-class-btn";
+    del.title = "Remove";
+    del.textContent = "×";
+    del.addEventListener("click", () => { tr.remove(); renumberClassRows(); });
+    delCell.appendChild(del);
+    tr.appendChild(idCell);
+    tr.appendChild(nameCell);
+    tr.appendChild(delCell);
+    tbody.appendChild(tr);
+  }
+  function renumberClassRows() {
+    $("class-table-body").querySelectorAll("tr").forEach((tr, idx) => {
+      tr.querySelector(".id-cell").textContent = String(idx);
+    });
+  }
+  function setClassRows(names) {
+    $("class-table-body").innerHTML = "";
+    (names || []).forEach(n => addClassRow(n));
+  }
+  $("add-class-btn").addEventListener("click", () => addClassRow(""));
+
+  function applyInspect(inspect) {
+    if (!inspect || !inspect.ok) return;
+    $("dataset-root-input").value = inspect.root || "";
+    const hasYaml = !!inspect.yaml;
+    $("use-raw-yaml-toggle").checked = hasYaml;
+    $("raw-yaml-block").classList.toggle("hidden", !hasYaml);
+    $("form-dataset-block").classList.toggle("hidden", hasYaml);
+    $("raw-yaml-path").value = inspect.yaml || "";
+    const names = inspect.names || {};
+    const ordered = Object.keys(names).sort((a, b) => Number(a) - Number(b)).map(k => names[k]);
+    if (ordered.length) setClassRows(ordered);
+  }
+
+  async function loadLastDataset(silent) {
+    const hint = $("last-dataset-hint");
+    const res = await fetch("/project/train/last-dataset", { cache: "no-store" });
+    const data = await res.json();
+    lastDatasetMeta = data;
+    if (!data.ok || !data.inspect || !data.inspect.ok) {
+      if (!silent) hint.textContent = "No dataset from Annotate yet.";
+      else hint.textContent = data.last ? "Last dataset folder is missing." : "Create a dataset in Annotate, or browse a folder.";
+      return false;
+    }
+    applyInspect(data.inspect);
+    const counts = data.inspect.counts || {};
+    hint.textContent = `Last split · train ${counts.train || 0} · val ${counts.val || 0} · test ${counts.test || 0}`;
+    return true;
+  }
+  $("use-last-dataset-btn").addEventListener("click", () => {
+    loadLastDataset(false).catch(err => { $("last-dataset-hint").textContent = String(err); });
+  });
+
+  $("use-raw-yaml-toggle").addEventListener("change", e => {
+    $("raw-yaml-block").classList.toggle("hidden", !e.target.checked);
+    $("form-dataset-block").classList.toggle("hidden", e.target.checked);
+  });
+  $("glare-aug-toggle").addEventListener("change", e => {
+    $("glare-aug-block").classList.toggle("hidden", !e.target.checked);
+  });
+
+  document.querySelectorAll(".browse-btn").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const targetInput = $(btn.dataset.target);
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "…";
+      try {
+        let data;
+        if (isDesktop()) {
+          if (btn.dataset.browse === "folder") {
+            data = await callBridge("pick_folder", targetInput.placeholder || "Choose folder");
+          } else if (btn.dataset.kind === "yaml") {
+            data = await callBridge("pick_yaml_file");
+          } else {
+            data = await callBridge("pick_weights_file");
+          }
+        } else {
+          const typed = window.prompt(targetInput.placeholder || "Path:");
+          data = typed ? { ok: true, path: typed.trim(), dir: typed.trim() } : { ok: false };
+        }
+        if (!data || !data.ok) return;
+        const path = data.path || data.dir;
+        if (!path) return;
+        targetInput.value = path;
+        targetInput.dispatchEvent(new Event("input", { bubbles: true }));
+        if (btn.dataset.target === "dataset-root-input") {
+          const res = await fetch("/project/train/inspect", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ root: path }),
+          });
+          applyInspect(await res.json());
+        }
+      } catch (err) {
+        alert("Browse failed: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+  });
+
+  function getDatasetConfig() {
+    const useRawYaml = $("use-raw-yaml-toggle").checked;
+    const classes = Array.from($("class-table-body").querySelectorAll("tr")).map((tr, idx) => ({
+      id: idx,
+      name: tr.querySelector(".class-name-input").value.trim() || ("class_" + idx),
+    }));
+    return {
+      dataset_root: $("dataset-root-input").value.trim(),
+      classes,
+      use_raw_yaml: useRawYaml,
+      raw_yaml_path: $("raw-yaml-path").value.trim() || null,
+    };
+  }
+  function getFullConfig() {
+    const modelPathInput = $("model-path-input").value.trim();
+    return {
+      base_model_path: modelPathInput || $("model-select").value,
+      dataset: getDatasetConfig(),
+      augmentation: {
+        degrees: parseFloat($("aug-degrees").value),
+        flipud: parseFloat($("aug-flipud").value),
+        fliplr: parseFloat($("aug-fliplr").value),
+        translate: parseFloat($("aug-translate").value),
+        scale: parseFloat($("aug-scale").value),
+        shear: parseFloat($("aug-shear").value),
+        perspective: parseFloat($("aug-perspective").value),
+        enable_glare_aug: $("glare-aug-toggle").checked,
+        hsv_h: parseFloat($("aug-hsv-h").value),
+        hsv_s: parseFloat($("aug-hsv-s").value),
+        hsv_v: parseFloat($("aug-hsv-v").value),
+        mosaic: parseFloat($("aug-mosaic").value),
+        mixup: parseFloat($("aug-mixup").value),
+        copy_paste: parseFloat($("aug-copy-paste").value),
+      },
+      epochs: parseInt($("hp-epochs").value, 10),
+      imgsz: parseInt($("hp-imgsz").value, 10),
+      batch: parseInt($("hp-batch").value, 10),
+      workers: parseInt($("hp-workers").value, 10),
+      device: $("hp-device").value,
+      lr0: parseFloat($("hp-lr0").value),
+      lrf: parseFloat($("hp-lrf").value),
+      optimizer: $("hp-optimizer").value,
+      patience: parseInt($("hp-patience").value, 10),
+      seed: parseInt($("hp-seed").value, 10),
+      project: $("hp-project").value.trim() || "runs",
+      name: $("hp-name").value.trim() || "run",
+      resume_from: $("hp-resume").value.trim() || null,
+    };
+  }
+  function applyConfigToForm(cfg) {
+    $("model-path-input").value = cfg.base_model_path || "";
+    $("use-raw-yaml-toggle").checked = !!(cfg.dataset && cfg.dataset.use_raw_yaml);
+    $("raw-yaml-block").classList.toggle("hidden", !cfg.dataset.use_raw_yaml);
+    $("form-dataset-block").classList.toggle("hidden", !!cfg.dataset.use_raw_yaml);
+    $("raw-yaml-path").value = (cfg.dataset && cfg.dataset.raw_yaml_path) || "";
+    $("dataset-root-input").value = (cfg.dataset && cfg.dataset.dataset_root) || "";
+    setClassRows(((cfg.dataset && cfg.dataset.classes) || []).map(c => c.name));
+    const aug = cfg.augmentation || {};
+    $("aug-degrees").value = aug.degrees ?? 0;
+    $("aug-flipud").value = aug.flipud ?? 0;
+    $("aug-fliplr").value = aug.fliplr ?? 0;
+    $("aug-translate").value = aug.translate ?? 0;
+    $("aug-scale").value = aug.scale ?? 0;
+    $("aug-shear").value = aug.shear ?? 0;
+    $("aug-perspective").value = aug.perspective ?? 0;
+    $("glare-aug-toggle").checked = !!aug.enable_glare_aug;
+    $("glare-aug-block").classList.toggle("hidden", !aug.enable_glare_aug);
+    $("aug-hsv-h").value = aug.hsv_h ?? 0.015;
+    $("aug-hsv-s").value = aug.hsv_s ?? 0.5;
+    $("aug-hsv-v").value = aug.hsv_v ?? 0.4;
+    $("aug-mosaic").value = aug.mosaic ?? 0;
+    $("aug-mixup").value = aug.mixup ?? 0;
+    $("aug-copy-paste").value = aug.copy_paste ?? 0;
+    $("hp-epochs").value = cfg.epochs ?? 20;
+    $("hp-imgsz").value = cfg.imgsz ?? 640;
+    $("hp-batch").value = cfg.batch ?? 8;
+    $("hp-workers").value = cfg.workers ?? 0;
+    if (cfg.device) $("hp-device").value = cfg.device;
+    $("hp-lr0").value = cfg.lr0 ?? 0.003;
+    $("hp-lrf").value = cfg.lrf ?? 0.0003;
+    $("hp-optimizer").value = cfg.optimizer ?? "auto";
+    $("hp-patience").value = cfg.patience ?? 0;
+    $("hp-seed").value = cfg.seed ?? 42;
+    $("hp-project").value = cfg.project ?? "runs";
+    $("hp-name").value = cfg.name ?? "run";
+    $("hp-resume").value = cfg.resume_from || "";
+  }
+
+  $("validate-dataset-btn").addEventListener("click", async () => {
+    const statusEl = $("validate-status");
+    const issuesEl = $("validation-issues");
+    statusEl.classList.remove("hidden");
+    statusEl.textContent = "checking…";
+    statusEl.className = "status-pill status-running";
+    try {
+      const res = await fetch("/project/train/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(getDatasetConfig()),
+      });
+      const result = await res.json();
+      statusEl.textContent = result.ok ? "valid" : "issues found";
+      statusEl.className = "status-pill " + (result.ok ? "status-ok" : "status-error");
+      issuesEl.innerHTML = "";
+      if ((result.issues || []).length) {
+        issuesEl.classList.remove("hidden");
+        result.issues.forEach(issue => {
+          const div = document.createElement("div");
+          div.className = "issue " + issue.level;
+          div.textContent = issue.message;
+          issuesEl.appendChild(div);
+        });
+      } else {
+        issuesEl.classList.add("hidden");
+      }
+    } catch (err) {
+      statusEl.textContent = "error";
+      statusEl.className = "status-pill status-error";
+    }
+  });
+
+  function renderReviewJson() {
+    $("review-json").textContent = JSON.stringify(getFullConfig(), null, 2);
+  }
+
+  async function loadModels() {
+    const res = await fetch("/project/train/models", { cache: "no-store" });
+    const data = await res.json();
+    const select = $("model-select");
+    select.innerHTML = "";
+    const groups = data.groups && data.groups.length
+      ? data.groups
+      : [{ title: "", models: data.models || [] }];
+    const total = groups.reduce((n, g) => n + ((g.models || []).length), 0);
+    if (!total) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = "— no .pt files in models/dot-pt —";
+      select.appendChild(opt);
+      return;
+    }
+    groups.forEach(group => {
+      const models = group.models || [];
+      if (!models.length) return;
+      const parent = group.title ? document.createElement("optgroup") : select;
+      if (group.title) {
+        parent.label = group.title;
+        select.appendChild(parent);
+      }
+      models.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m.path;
+        opt.textContent = m.name;
+        parent.appendChild(opt);
+      });
+    });
+  }
+  async function loadDevices() {
+    const res = await fetch("/project/train/devices", { cache: "no-store" });
+    const data = await res.json();
+    const select = $("hp-device");
+    select.innerHTML = "";
+    (data.devices || [{ value: "cpu", label: "CPU" }]).forEach(d => {
+      const opt = document.createElement("option");
+      opt.value = d.value;
+      opt.textContent = d.label;
+      select.appendChild(opt);
+    });
+  }
+  async function loadRuntimeDefaults() {
+    try {
+      const res = await fetch("/project/train/runtime", { cache: "no-store" });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.project && $("hp-project").value === "runs") $("hp-project").value = data.project;
+      if (typeof data.workers === "number") $("hp-workers").value = data.workers;
+    } catch (e) { /* ignore */ }
+  }
+  async function loadPresets() {
+    const res = await fetch("/project/train/presets", { cache: "no-store" });
+    const data = await res.json();
+    const select = $("preset-select");
+    select.innerHTML = "";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "— none —";
+    select.appendChild(none);
+    (data.presets || []).forEach(p => {
+      const opt = document.createElement("option");
+      opt.value = p.name;
+      opt.textContent = p.name;
+      select.appendChild(opt);
+    });
+  }
+  $("save-preset-btn").addEventListener("click", async () => {
+    const name = prompt("Preset name:");
+    if (!name) return;
+    await fetch("/project/train/presets", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, config: getFullConfig() }),
+    });
+    await loadPresets();
+    $("preset-select").value = name;
+  });
+  $("load-preset-btn").addEventListener("click", async () => {
+    const name = $("preset-select").value;
+    if (!name) return;
+    const res = await fetch("/project/train/presets/" + encodeURIComponent(name), { cache: "no-store" });
+    if (!res.ok) return;
+    applyConfigToForm(await res.json());
+  });
+
+  $("start-training-btn").addEventListener("click", async () => {
+    const cfg = getFullConfig();
+    try {
+      const res = await fetch("/project/train/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(cfg),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const issues = (data.issues || []).map(i => i.message).join("\n");
+        alert((data.error || "Could not start training") + (issues ? "\n\n" + issues : ""));
+        return;
+      }
+      attachToJob(data.job_id);
+      refreshJobList();
+    } catch (err) {
+      alert("Request failed: " + err.message);
+    }
+  });
+
+  async function refreshJobList() {
+    const res = await fetch("/project/train/jobs", { cache: "no-store" });
+    const data = await res.json();
+    const listEl = $("job-list");
+    const jobs = data.jobs || [];
+    if (!jobs.length) {
+      listEl.innerHTML = '<div class="job-list-empty">No jobs yet</div>';
+      return;
+    }
+    listEl.innerHTML = "";
+    jobs.slice().reverse().forEach(job => {
+      const div = document.createElement("div");
+      div.className = "job-item" + (job.job_id === activeJobId ? " on" : "");
+      const dot = document.createElement("span");
+      dot.className = "job-dot " + job.state;
+      const label = document.createElement("span");
+      label.textContent = job.job_id + " · " + job.state;
+      div.appendChild(dot);
+      div.appendChild(label);
+      div.addEventListener("click", () => attachToJob(job.job_id));
+      listEl.appendChild(div);
+    });
+  }
+
+  function updateProgressBar(progress) {
+    const wrap = $("console-progress");
+    const fill = $("progress-fill");
+    const text = $("progress-text");
+    if (!progress) {
+      wrap.classList.add("hidden");
+      fill.style.width = "0%";
+      return;
+    }
+    wrap.classList.remove("hidden");
+    fill.style.width = Math.min(100, progress.percent || 0) + "%";
+    const batchPart = progress.total_batches
+      ? " · batch " + progress.batch + "/" + progress.total_batches
+      : "";
+    text.textContent = "Epoch " + progress.epoch + "/" + progress.total_epochs + batchPart + " · " + progress.percent + "%";
+  }
+  const STATUS_DISPLAY = {
+    queued: ["queued", "status-idle"],
+    running: ["running", "status-running"],
+    completed: ["completed", "status-ok"],
+    failed: ["failed", "status-error"],
+    stopped: ["stopped", "status-idle"],
+  };
+  function setStatusPill(state) {
+    const el = $("console-status");
+    const pair = STATUS_DISPLAY[state] || [state || "idle", "status-idle"];
+    el.textContent = pair[0];
+    el.className = "status-pill " + pair[1];
+  }
+  const TERMINAL_STATES = ["completed", "failed", "stopped"];
+  const PROGRESS_MARKER_RE = /PROGRESS epoch=\d+ total_epochs=\d+ percent=[\d.]+/;
+
+  async function pollJobOnce(jobId) {
+    if (jobId !== activeJobId) return;
+    let res;
+    try {
+      res = await fetch("/project/train/jobs/" + jobId, { cache: "no-store" });
+    } catch (err) {
+      return;
+    }
+    if (jobId !== activeJobId) return;
+    if (!res.ok) {
+      if (res.status === 404 && pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+        $("console-body").textContent = "(job not found on server)";
+      }
+      return;
+    }
+    const data = await res.json();
+    if (jobId !== activeJobId) return;
+    setStatusPill(data.state);
+    updateProgressBar(data.progress);
+    const logText = (data.logs || []).filter(line => !PROGRESS_MARKER_RE.test(line)).join("\n");
+    if (logText !== lastRenderedLogText) {
+      const body = $("console-body");
+      const atBottom = body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+      body.textContent = logText;
+      lastRenderedLogText = logText;
+      if (atBottom) body.scrollTop = body.scrollHeight;
+    }
+    if (TERMINAL_STATES.includes(data.state)) {
+      if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      refreshJobList();
+    }
+  }
+  async function attachToJob(jobId) {
+    activeJobId = jobId;
+    $("console-job-id").textContent = jobId;
+    $("console-body").textContent = "";
+    lastRenderedLogText = "";
+    updateProgressBar(null);
+    setStatusPill("queued");
+    if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+    await pollJobOnce(jobId);
+    pollTimer = setInterval(() => pollJobOnce(jobId), 1500);
+    refreshJobList();
+  }
+  $("stop-job-btn").addEventListener("click", async () => {
+    if (!activeJobId) return;
+    await fetch("/project/train/jobs/" + activeJobId + "/stop", { method: "POST" });
+    refreshJobList();
+  });
+  $("clear-console-btn").addEventListener("click", () => {
+    $("console-body").textContent = "";
+    lastRenderedLogText = "";
+  });
+  $("copy-console-btn").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($("console-body").textContent || "");
+    } catch (e) { /* ignore */ }
+  });
+
+  (async function init() {
+    await loadModels();
+    await loadDevices();
+    await loadRuntimeDefaults();
+    await loadPresets();
+    await loadLastDataset(true);
+    await refreshJobList();
+    setInterval(refreshJobList, 5000);
+  })();
+})();
+</script>
+</body>
+</html>

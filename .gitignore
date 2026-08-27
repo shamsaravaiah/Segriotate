@@ -6,6 +6,10 @@ FastSAM-s.pt
 mobile_sam.pt
 images/
 labels/
+workspace/labels/
+workspace/logs/
+workspace/train/
+workspace/last_dataset.json
 models/**/*.pt
 models/**/*.engine
 models/**/*.onnx

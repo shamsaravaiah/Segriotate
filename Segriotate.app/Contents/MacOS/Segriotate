@@ -2,7 +2,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"
-LOG="$ROOT/segriotate.log"
+mkdir -p "$ROOT/workspace/logs"
+LOG="$ROOT/workspace/logs/segriotate.log"
 
 if [ ! -x "$ROOT/venv/bin/python" ]; then
   osascript -e 'display alert "Segriotate" message "Python venv not found. In Terminal run:\n\ncd '"$ROOT"'\npython3 -m venv venv\nsource venv/bin/activate\npip install -r requirements.txt" as critical'
