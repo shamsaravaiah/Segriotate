@@ -1,0 +1,56 @@
+---
+description: End-to-end Annotate mask pipeline (Auto-Detect, click-to-segment, YOLO-seg save). Do not reinvent.
+globs: tools/label_editor.html,scripts/segment_server.py,scripts/02_generate_labels.py,config.py
+alwaysApply: false
+---
+
+# Annotate segmentation (how clean masks are produced)
+
+Instance segmentation, not boxes. The model outputs a **pixel mask**. Ultralytics traces it to a dense polygon (`masks.xyn`). The editor stamps the **user’s active class** (e.g. Export Premium). SAM/YOLO do not pick grades.
+
+Do not delete original photos. Do not delete `workspace/sort/hub`. Labels: `workspace/labels/<folder>_labels/<stem>.txt`.
+
+## Two inference paths
+
+| Path | When | Model | Endpoint |
+|---|---|---|---|
+| Auto-Detect | Image loads and `.txt` is missing/empty | `models/dot-pt/segmentation.pt` (YOLO-seg) | `POST /detect` |
+| Click-to-segment | Click empty canvas, Click-to-Segment ON | FastSAM / MobileSAM in `models/dot-pt/` (or `.engine`) | `POST /segment` |
+
+Manual draw (`N`) is separate. Dense outlines hugging the fruit are almost always click-to-segment (or Auto-Detect using the same `masks.xyn`).
+
+## Client (`tools/label_editor.html`)
+
+- `getImageBase64()`: offscreen canvas, JPEG 0.9 data URL, cached on `state.imgBase64`.
+- Clicks are **normalized 0–1** image coords (`canvasToImg` → `clamp01`), not canvas pixels.
+- Auto-Detect: `loadCurrentLabel` → empty label + `state.autoDetect` → `autoDetectCurrentImage` → `POST /detect` `{ image }`.
+- Detect results use `clampClassId(state.activeClassId)` for **every** object (ignore server class for the UI stamp).
+- If the user already drew/clicked while detect is in flight (`state.polygons.length || state.dirty`), **do not overwrite**.
+- Click: `mousedown` → not pan, not vertex, `findPolygonAt === -1`, `state.clickToSegment` → `segmentAtClick(nx, ny)`.
+- `POST /segment` `{ image, x, y, format, model }`. Need `requireClass()` and `state.clickModel`.
+- Response `points.length >= 3` → `makePoly([state.activeClassId], points)` → `markDirty()`.
+
+## Server (`scripts/segment_server.py`)
+
+- `decode_image`: data URL → RGB PIL.
+- `/detect`: `detect_model.predict(img, conf=MIN_CONFIDENCE)` then `result.masks.xyn` + `boxes.cls`, `remap_class`, skip `< 3` points. `segmentation.pt` must be `task == "segment"`.
+- `/segment`: `px, py = x * w, y * h`. `get_click_model` — `fastsam*` → FastSAM, `sam` in name → SAM, else YOLO. Skip stem `segmentation`.
+- FastSAM: `model(img, points=[[px, py]], labels=[1], conf=0.4)`. SAM: `predict` with point-shape fallbacks until masks exist.
+- Return **first** mask only: `result.masks.xyn[0]`.
+- Click models load lazily on first `/segment`. FastSAM-s/x and mobile_sam download on boot (`config.MODEL_DOWNLOADS`).
+
+## Why outlines look clean
+
+No CRF, no edge-snap, no Douglas–Peucker. The network predicts a dense silhouette; Ultralytics keeps **every** contour vertex. Do not simplify polygons unless the user asks.
+
+## Save
+
+`polygonsToYolo()`: `<classId> x1 y1 x2 y2 ... xn yn` (normalized, 6 decimals). `POST /label` `{ stem, text }` → paired labels dir. Auto-save ~500ms; flush on `pagehide`. Empty `.txt` placeholders do not count as labelled.
+
+## Do not
+
+- Output boxes instead of `masks.xyn` polygons.
+- Assign SAM/YOLO internal class ids as the fruit grade.
+- Downsample contours by default.
+- Overwrite in-flight user edits when Auto-Detect returns late.
+- Write labels next to the photos; use `effective_labels_dir()` / `paired_labels_dir()`.

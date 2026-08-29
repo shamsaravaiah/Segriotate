@@ -9,6 +9,7 @@ labels/
 workspace/labels/
 workspace/logs/
 workspace/train/
+workspace/sort/
 workspace/last_dataset.json
 models/**/*.pt
 models/**/*.engine

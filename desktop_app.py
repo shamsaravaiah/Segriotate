@@ -274,6 +274,9 @@ class MainWindow(QMainWindow):
         home_act = QAction("Home", self)
         home_act.triggered.connect(lambda: self.view.setUrl(QUrl(BASE + "/")))
         go.addAction(home_act)
+        sort_act = QAction("Sort", self)
+        sort_act.triggered.connect(lambda: self.view.setUrl(QUrl(BASE + "/sort")))
+        go.addAction(sort_act)
         annotate_act = QAction("Annotate", self)
         annotate_act.triggered.connect(lambda: self.view.setUrl(QUrl(BASE + "/annotate")))
         go.addAction(annotate_act)
@@ -285,6 +288,8 @@ class MainWindow(QMainWindow):
         url = self.view.url().toString()
         if "/annotate" in url:
             return "annotate"
+        if "/sort" in url:
+            return "sort"
         if "/train" in url:
             return "train"
         return "home"
@@ -293,12 +298,14 @@ class MainWindow(QMainWindow):
         kind = self._page_kind()
         titles = {
             "annotate": "Segri-Labs — Annotate",
+            "sort": "Segri-Labs — Sort (Beta)",
             "train": "Segri-Labs — Train",
             "home": "Segri-Labs",
         }
         self.setWindowTitle(titles.get(kind, "Segri-Labs"))
         on_annotate = bool(ok) and kind == "annotate"
-        self._open_act.setEnabled(on_annotate)
+        on_sort = bool(ok) and kind == "sort"
+        self._open_act.setEnabled(on_annotate or on_sort)
         self._labels_act.setEnabled(on_annotate)
 
     def _choose_directory(self, title: str, start: str | None = None) -> str:
@@ -365,6 +372,20 @@ class MainWindow(QMainWindow):
         })
 
     def open_images_from_menu(self):
+        if self._page_kind() == "sort":
+            data = json.loads(self.pick_images_folder_json())
+            if not data.get("ok"):
+                if data.get("error"):
+                    QMessageBox.warning(self, "Segri-Labs", data["error"])
+                return
+            files_js = json.dumps(data["files"])
+            dir_js = json.dumps(data["dir"])
+            self.view.page().runJavaScript(
+                "if (window.applySortFolder) {"
+                f" window.applySortFolder({files_js}, {dir_js});"
+                "}"
+            )
+            return
         self.view.page().runJavaScript(
             "typeof window.confirmClassesForAnnotation === 'function' "
             "? window.confirmClassesForAnnotation() : true",

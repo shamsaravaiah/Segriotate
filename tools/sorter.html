@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Segri-Labs — Sort</title>
+<link rel="icon" type="image/png" href="/icon.png">
+<link rel="stylesheet" href="/labs.css">
+<style>
+  html, body { height: 100%; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  .sort-shell {
+    flex: 1; min-height: 0;
+    display: grid; grid-template-columns: 240px 1fr;
+  }
+  .sidebar {
+    background: var(--panel); border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; padding: 14px 12px 16px; overflow-y: auto; gap: 12px;
+  }
+  .main { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .board {
+    flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px; padding: 16px; overflow: auto; align-content: start;
+  }
+  .bin-card {
+    position: relative;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    overflow: hidden; display: flex; flex-direction: column; cursor: pointer;
+    min-height: 240px;
+  }
+  .bin-card:hover, .bin-card.over { border-color: var(--accent); }
+  .bin-card.unsorted { opacity: 0.92; }
+  .cover {
+    height: 150px; background: var(--panel-2); display: grid;
+    grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 1px;
+  }
+  .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .cover.one { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  .bin-card-body { padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .bin-title { font-weight: 600; font-size: 13px; }
+  .bin-meta { font-size: 11px; color: var(--text-faint); }
+  .bin-actions { display: flex; gap: 6px; }
+  .bin-actions button { flex: 1; }
+  .bin-tag {
+    display: inline-flex; align-items: center; gap: 4px; width: fit-content;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: #0a1210; background: var(--accent); border-radius: 999px; padding: 2px 8px;
+  }
+  .bin-card > .bin-tag {
+    position: absolute; top: 8px; right: 8px; z-index: 2; pointer-events: none;
+    box-shadow: 0 1px 4px rgba(0,0,0,.35);
+  }
+  .beta-tag {
+    display: inline-block; margin-left: 6px; vertical-align: middle;
+    font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--accent); border: 1px solid var(--accent-dim); border-radius: 999px;
+    padding: 1px 6px;
+  }
+  .new-bin {
+    border: 1px dashed var(--border); border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-faint); font-size: 13px; font-weight: 600; min-height: 240px;
+  }
+  .new-bin.over { border-color: var(--accent); color: var(--accent); }
+  .status-line { font-size: 12px; color: var(--text-dim); line-height: 1.45; min-height: 2.6em; }
+  .bar-wrap { height: 4px; background: var(--panel-2); border-radius: 2px; overflow: hidden; }
+  .bar { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .gallery { display: none; flex: 1; min-height: 0; flex-direction: column; }
+  .gallery.on { display: flex; }
+  .gallery-bar {
+    display: flex; align-items: center; gap: 10px; padding: 12px 16px;
+    border-bottom: 1px solid var(--border); background: var(--panel); flex-shrink: 0;
+  }
+  .gallery-bar h2 { margin: 0; font-size: 15px; font-weight: 600; }
+  .gallery-bar input { max-width: 240px; }
+  .gallery-grid {
+    flex: 1; overflow: auto; padding: 16px;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 10px; align-content: start;
+  }
+  .shot {
+    aspect-ratio: 1; border-radius: 6px; overflow: hidden; cursor: grab;
+    border: 1px solid var(--border); background: var(--panel-2);
+  }
+  .shot img { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+  .shot:active { cursor: grabbing; }
+  .lightbox {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.78);
+    z-index: 20; align-items: center; justify-content: center; padding: 32px;
+  }
+  .lightbox.on { display: flex; }
+  .lightbox img { max-width: 92vw; max-height: 88vh; object-fit: contain; border-radius: 8px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="app-bar">
+    <img class="app-logo" src="/icon.png" width="22" height="22" alt="">
+    <h1>SEGRI-LABS</h1>
+    <a class="nav-link" href="/">Home</a>
+    <a class="nav-link active" href="/sort">Sort <span class="beta-tag">Beta</span></a>
+    <a class="nav-link" href="/annotate">Annotate</a>
+    <a class="nav-link" href="/train">Train</a>
+  </div>
+  <div class="sort-shell">
+    <aside class="sidebar">
+      <div>
+        <div class="section-title">Folder</div>
+        <button type="button" id="open-btn" style="width:100%">Open Images…</button>
+        <button type="button" class="danger" id="clear-btn" style="width:100%; margin-top:8px">Clear cache</button>
+        <p class="status-line" id="folder-hint">Dump a folder of images, then Sort.</p>
+      </div>
+      <div>
+        <div class="section-title">Sort <span class="beta-tag">Beta</span></div>
+        <p class="hint">Groups similar photos into bins. Originals stay in your folder. First run embeds; Sort again only re-groups from cache (or embeds new photos).</p>
+        <button type="button" class="primary" id="sort-btn" style="width:100%; margin-top:10px" disabled>Sort into bins</button>
+        <div class="bar-wrap" style="margin-top:10px;"><div class="bar" id="bar"></div></div>
+        <p class="status-line" id="sort-status">ResNet-50 reads how each photo looks. Groups form where the hierarchy naturally splits.</p>
+      </div>
+      <div>
+        <div class="section-title">Next</div>
+        <p class="hint">Open a bin to review. Annotate uses your usual class list — labels are YOLO .txt files. A bin gets a check when every image in it has a label.</p>
+      </div>
+    </aside>
+    <div class="main">
+      <div class="board" id="board">
+        <div class="hint" id="empty">Open a folder, then click Sort.</div>
+      </div>
+      <div class="gallery" id="gallery">
+        <div class="gallery-bar">
+          <button type="button" id="back-btn">← All bins</button>
+          <h2 id="gallery-title">Bin</h2>
+          <span class="bin-meta" id="gallery-meta"></span>
+          <span class="bin-tag hidden" id="gallery-tag">✓ Annotated</span>
+          <div class="spacer"></div>
+          <button type="button" class="primary" id="gallery-annotate">Annotate this bin</button>
+        </div>
+        <div class="gallery-grid" id="gallery-grid"></div>
+      </div>
+    </div>
+  </div>
+  <div class="lightbox" id="lightbox" title="Click to close">
+    <img id="lightbox-img" alt="">
+  </div>
+<script>
+(function () {
+  const state = {
+    files: [],
+    fileByStem: {},
+    bins: [],
+    embedder: "",
+    imagesDir: "",
+    polling: false,
+    sorted: false,
+    openBinId: null,
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function isDesktop() { return !!window.IS_DESKTOP_APP || !!window.qtBridge; }
+  function waitBridge() {
+    if (window.qtBridge) return Promise.resolve(window.qtBridge);
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("desktop picker not ready")), 8000);
+      window.addEventListener("qtbridgeready", () => {
+        clearTimeout(t);
+        resolve(window.qtBridge);
+      }, { once: true });
+    });
+  }
+  function callBridge(method) {
+    return waitBridge().then(bridge => new Promise((resolve, reject) => {
+      if (!bridge[method]) { reject(new Error(method + " not available")); return; }
+      bridge[method](raw => {
+        try { resolve(JSON.parse(raw)); }
+        catch (e) { reject(e); }
+      });
+    }));
+  }
+
+  function syncButtons() {
+    $("sort-btn").disabled = !state.files.length || state.polling;
+    $("sort-btn").textContent = state.sorted ? "Sort again" : "Sort into bins";
+    $("clear-btn").disabled = false;
+  }
+
+  function setFiles(files, dir) {
+    const same = dir && dir === state.imagesDir;
+    state.files = files || [];
+    state.fileByStem = {};
+    state.files.forEach(f => { state.fileByStem[f.stem] = f; });
+    if (!same) {
+      state.sorted = false;
+      state.openBinId = null;
+    }
+    state.imagesDir = dir || "";
+    $("folder-hint").textContent = state.files.length
+      ? `${state.files.length} image(s) in ${dir || "folder"}`
+      : "Dump a folder of images, then Sort.";
+    syncButtons();
+  }
+
+  function thumbUrl(stem) {
+    const f = state.fileByStem[stem];
+    if (!f) return "";
+    return "/media/" + encodeURIComponent(f.name);
+  }
+
+  function openBin(id) {
+    state.openBinId = id;
+    render();
+  }
+
+  function closeBin() {
+    state.openBinId = null;
+    render();
+  }
+
+  function currentBin() {
+    return state.bins.find(b => b.id === state.openBinId) || null;
+  }
+
+  function render() {
+    const board = $("board");
+    const gallery = $("gallery");
+    const bin = currentBin();
+    if (bin) {
+      board.classList.add("hidden");
+      gallery.classList.add("on");
+      renderGallery(bin);
+      return;
+    }
+    gallery.classList.remove("on");
+    board.classList.remove("hidden");
+    board.innerHTML = "";
+    if (!state.bins.length) {
+      const empty = document.createElement("div");
+      empty.className = "hint";
+      empty.textContent = state.files.length ? "Click Sort into bins." : "Open a folder, then click Sort.";
+      board.appendChild(empty);
+      return;
+    }
+    state.bins.forEach((b, i) => board.appendChild(binCard(b, i)));
+    const add = document.createElement("div");
+    add.className = "new-bin";
+    add.textContent = "+ New bin";
+    wireDrop(add, () => newBin().id);
+    board.appendChild(add);
+  }
+
+  function newBin() {
+    const bin = { id: "bin-" + Date.now(), unsorted: false, stems: [] };
+    state.bins.push(bin);
+    return bin;
+  }
+
+  function coverUrls(bin) {
+    return bin.stems.slice(0, 4).map(thumbUrl).filter(Boolean);
+  }
+
+  function binTitle(bin, index) {
+    if (bin.unsorted) return "Unsorted";
+    const n = state.bins.filter(b => !b.unsorted).indexOf(bin);
+    return "Bin " + ((n >= 0 ? n : index) + 1);
+  }
+
+  function binCard(bin, index) {
+    const el = document.createElement("section");
+    el.className = "bin-card" + (bin.unsorted ? " unsorted" : "");
+    const cover = document.createElement("div");
+    cover.className = "cover" + (bin.stems.length <= 1 ? " one" : "");
+    coverUrls(bin).forEach(src => {
+      const img = document.createElement("img");
+      img.src = src;
+      img.alt = "";
+      cover.appendChild(img);
+    });
+    cover.addEventListener("click", () => openBin(bin.id));
+    const body = document.createElement("div");
+    body.className = "bin-card-body";
+    const title = document.createElement("div");
+    title.className = "bin-title";
+    title.textContent = binTitle(bin, index);
+    const meta = document.createElement("div");
+    meta.className = "bin-meta";
+    meta.textContent = bin.stems.length + (bin.stems.length === 1 ? " image" : " images") + " · click to open";
+    const actions = document.createElement("div");
+    actions.className = "bin-actions";
+    const view = document.createElement("button");
+    view.type = "button";
+    view.textContent = "Open";
+    view.addEventListener("click", e => { e.stopPropagation(); openBin(bin.id); });
+    actions.appendChild(view);
+    const ann = document.createElement("button");
+    ann.type = "button";
+    ann.className = "primary";
+    ann.textContent = "Annotate";
+    ann.disabled = !bin.stems.length;
+    ann.addEventListener("click", e => { e.stopPropagation(); applyBin(bin.id); });
+    actions.appendChild(ann);
+    body.appendChild(title);
+    body.appendChild(meta);
+    body.appendChild(actions);
+    el.appendChild(cover);
+    el.appendChild(body);
+    if (bin.annotated) {
+      const tag = document.createElement("span");
+      tag.className = "bin-tag";
+      tag.textContent = "✓ Annotated";
+      el.appendChild(tag);
+    }
+    wireDrop(el, () => bin.id);
+    return el;
+  }
+
+  function renderGallery(bin) {
+    $("gallery-title").textContent = binTitle(bin, 0);
+    $("gallery-meta").textContent = bin.stems.length + (bin.stems.length === 1 ? " image" : " images");
+    $("gallery-tag").classList.toggle("hidden", !bin.annotated);
+    $("gallery-annotate").disabled = !bin.stems.length;
+    const grid = $("gallery-grid");
+    grid.innerHTML = "";
+    bin.stems.forEach(stem => {
+      const f = state.fileByStem[stem];
+      if (!f) return;
+      const card = document.createElement("div");
+      card.className = "shot";
+      card.draggable = true;
+      card.title = f.name;
+      card.addEventListener("dragstart", e => {
+        e.dataTransfer.setData("text/plain", stem);
+        e.dataTransfer.effectAllowed = "move";
+      });
+      card.addEventListener("click", () => showLightbox(thumbUrl(stem)));
+      const img = document.createElement("img");
+      img.src = thumbUrl(stem);
+      img.alt = f.name;
+      card.appendChild(img);
+      grid.appendChild(card);
+    });
+    wireDrop(grid, () => bin.id);
+  }
+
+  function wireDrop(el, destIdFn) {
+    el.addEventListener("dragover", e => { e.preventDefault(); el.classList.add("over"); });
+    el.addEventListener("dragleave", () => el.classList.remove("over"));
+    el.addEventListener("drop", e => {
+      e.preventDefault();
+      el.classList.remove("over");
+      const stem = e.dataTransfer.getData("text/plain");
+      if (stem) moveStem(stem, destIdFn());
+    });
+  }
+
+  function moveStem(stem, destId) {
+    let dest = state.bins.find(b => b.id === destId);
+    if (!dest) return;
+    state.bins.forEach(b => { b.stems = b.stems.filter(s => s !== stem); });
+    if (!dest.stems.includes(stem)) dest.stems.push(stem);
+    state.bins = state.bins.filter(b => b.unsorted || b.stems.length || b.id === destId);
+    if (state.openBinId && !state.bins.some(b => b.id === state.openBinId)) state.openBinId = destId;
+    render();
+    saveBins();
+  }
+
+  function showLightbox(src) {
+    if (!src) return;
+    $("lightbox-img").src = src;
+    $("lightbox").classList.add("on");
+  }
+
+  async function saveBins() {
+    try {
+      await fetch("/project/sort/bins", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          bins: state.bins,
+          embedder: state.embedder,
+        }),
+      });
+    } catch (e) { /* ignore */ }
+  }
+
+  async function applyBin(binId) {
+    const res = await fetch("/project/sort/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        bins: state.bins,
+        embedder: state.embedder,
+        bin_id: binId,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $("sort-status").textContent = data.error || "Could not open Annotate";
+      return;
+    }
+    window.location.href = "/annotate?from=sort";
+  }
+
+  async function openFolder() {
+    if (isDesktop()) {
+      const data = await callBridge("pick_images_folder");
+      if (!data || !data.ok) return;
+      setFiles(data.files, data.dir);
+      await loadSaved();
+      render();
+      return;
+    }
+    const path = prompt("Folder path");
+    if (!path) return;
+    const res = await fetch("/project/images-dir", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $("folder-hint").textContent = data.error || "Could not open folder";
+      return;
+    }
+    setFiles(data.files, data.dir);
+    await loadSaved();
+    render();
+  }
+
+  async function loadSaved() {
+    const res = await fetch("/project/sort/bins");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.bins && data.bins.length) {
+      state.bins = data.bins;
+      state.embedder = data.embedder || "";
+      state.sorted = true;
+      syncButtons();
+    }
+  }
+
+  function resetView() {
+    state.files = [];
+    state.fileByStem = {};
+    state.bins = [];
+    state.embedder = "";
+    state.imagesDir = "";
+    state.sorted = false;
+    state.openBinId = null;
+    $("folder-hint").textContent = "Dump a folder of images, then Sort.";
+    $("sort-status").textContent = "Cleared. Open a folder to start again.";
+    $("bar").style.width = "0";
+    $("lightbox").classList.remove("on");
+    $("lightbox-img").src = "";
+    syncButtons();
+    render();
+  }
+
+  async function clearCache() {
+    $("clear-btn").disabled = true;
+    $("sort-status").textContent = "Clearing cache…";
+    const res = await fetch("/project/sort/clear", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $("sort-status").textContent = data.error || "Could not clear cache";
+      syncButtons();
+      return;
+    }
+    resetView();
+    $("sort-status").textContent = "Cache cleared. Open a folder to start again.";
+  }
+
+  async function runSort() {
+    $("sort-btn").disabled = true;
+    $("sort-status").textContent = state.sorted
+      ? "Grouping with cached embeddings…"
+      : "Starting… first run may download ResNet-50.";
+    const res = await fetch("/project/sort/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      $("sort-status").textContent = data.error || "Sort failed";
+      syncButtons();
+      return;
+    }
+    poll();
+  }
+
+  async function poll() {
+    if (state.polling) return;
+    state.polling = true;
+    syncButtons();
+    try {
+      while (true) {
+        const res = await fetch("/project/sort/status");
+        const data = await res.json();
+        if (Array.isArray(data.files)) setFiles(data.files, data.images_dir);
+        const total = Number(data.total) || 0;
+        const done = Number(data.done) || 0;
+        $("bar").style.width = total ? Math.round(100 * done / total) + "%" : (data.state === "done" ? "100%" : "8%");
+        $("sort-status").textContent = data.message || data.state || "";
+        if (data.state === "done") {
+          if (data.bins) state.bins = data.bins;
+          state.embedder = data.saved_embedder || "";
+          state.sorted = true;
+          $("sort-status").textContent = data.from_cache
+            ? "Re-grouped from cache. Open a bin to review, then Annotate if you want labels."
+            : "Sorted. Open a bin to review, then Annotate if you want labels.";
+          render();
+          break;
+        }
+        if (data.state === "error") {
+          $("sort-status").textContent = data.error || data.message || "Sort failed";
+          break;
+        }
+        if (data.state !== "running") {
+          break;
+        }
+        await new Promise(r => setTimeout(r, 700));
+      }
+    } finally {
+      state.polling = false;
+      syncButtons();
+    }
+  }
+
+  window.applySortFolder = function (files, dir) {
+    setFiles(files || [], dir || "");
+    loadSaved().then(render);
+  };
+
+  $("open-btn").addEventListener("click", () => openFolder().catch(e => {
+    $("folder-hint").textContent = e.message || String(e);
+  }));
+  $("clear-btn").addEventListener("click", () => clearCache().catch(e => {
+    $("sort-status").textContent = e.message || String(e);
+    syncButtons();
+  }));
+  $("sort-btn").addEventListener("click", () => runSort().catch(e => {
+    $("sort-status").textContent = e.message || String(e);
+    syncButtons();
+  }));
+  $("back-btn").addEventListener("click", closeBin);
+  $("gallery-annotate").addEventListener("click", () => {
+    if (state.openBinId) applyBin(state.openBinId);
+  });
+  $("lightbox").addEventListener("click", () => $("lightbox").classList.remove("on"));
+
+  (async function init() {
+    try {
+      const res = await fetch("/project/sort/status");
+      const data = await res.json();
+      if (Array.isArray(data.files)) setFiles(data.files, data.images_dir);
+      if (data.bins && data.bins.length) {
+        state.bins = data.bins;
+        state.embedder = data.saved_embedder || "";
+        state.sorted = true;
+      }
+      syncButtons();
+      render();
+      if (data.state === "running") poll();
+    } catch (e) {
+      render();
+    }
+  })();
+})();
+</script>
+</body>
+</html>

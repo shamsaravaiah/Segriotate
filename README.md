@@ -1,19 +1,25 @@
 # SegriLabs
 
-
 <p align="center">
-  <img src="Segriotate.app/Contents/Resources/segriotate_icon_1024.png" alt="Segriotate icon" width="160">
+  <img src="Segriotate.app/Contents/Resources/segriotate_icon_1024.png" alt="Segri-Labs icon" width="160">
 </p>
 
-A local desktop app for **fruit grading** and **YOLO segmentation labelling**.
+A local desktop app for **YOLO segmentation labelling** and **model training**.
 
-You open a folder of images, Segriotate pre-draws a polygon on every fruit your
-trained model can see, and you grade those fruits (export, domestic, reject,
-…) as you go. Anything the model misses, you click once and FastSAM (or
-MobileSAM) fills in the mask. Labels are written as standard YOLO `.txt`
-files on disk — nothing is uploaded.
+Open a folder of images, draw or auto-detect masks, export a train / val / test
+dataset, then train (or fine-tune) a YOLO-seg model on that dataset. Labels and
+weights stay on disk — nothing is uploaded.
+
+Home has two labs:
+
+- **Annotate** — label images and export a split dataset
+- **Train** — pick weights, point at a dataset, run training
+
+Everything runs on `127.0.0.1`. Images never leave the machine.
 
 ## What it does
+
+### Annotate
 
 - **Auto-Detect** — runs your YOLO segmentation model (`segmentation.pt`) on
   each image as soon as it loads, and pre-fills polygons.
@@ -23,10 +29,25 @@ files on disk — nothing is uploaded.
 - **Grading classes** — assign one or more classes per fruit (`0–9`,
   `Shift+0–9` to add a second class). Types such as EXP / DOM / RET are
   UI groups only; YOLO files store subclass ids `0–9`.
-- **Save** — writes YOLO segmentation `.txt` next to a paired labels folder.
-  **Export ZIP** packs the current labels for backup or CVAT.
+- **Save** — writes YOLO segmentation `.txt` to a paired labels folder under
+  `workspace/labels/`. **Export ZIP** packs the current labels for backup or CVAT.
+- **Dataset split** — copies only images that have at least one mask into
+  `images/train`, `images/val`, `images/test` (and matching `labels/`) plus
+  `data.yaml`. Empty photos are skipped.
 
-Everything runs on `127.0.0.1`. Images never leave the machine.
+### Train
+
+- **Base model** — start from Annotate weights in `models/dot-pt/`, a previous
+  run under `workspace/train/runs/`, or any `.pt` you browse to.
+- **Dataset** — **Use last from Annotate**, pick another folder with
+  `images/train` + `labels/train` (or `train/images` + `train/labels`), or
+  point at an existing `data.yaml`.
+- **Hyperparameters** — epochs, image size, batch, device (CUDA / Apple MPS /
+  CPU), optimizer, learning rate, patience, seed.
+- **Augmentation** — defaults assume a fixed camera (geometry off). Optional
+  glare / HSV / mosaic for lighting.
+- **Jobs** — start, watch logs, stop. One job at a time. Weights land in
+  `workspace/train/runs/<run-name>/weights/` (`best.pt`, `last.pt`).
 
 ## How it works
 
@@ -37,48 +58,41 @@ python desktop_app.py   (or double-click Segriotate.app)
 local Flask server starts on http://127.0.0.1:8765
      |
      v
-your YOLO-seg model loads from models/dot-pt/segmentation.pt
+Home  →  Annotate  or  Train
      |
-     v
-Open Images…  →  labels saved to labels/<folder-name>_labels/
+     +-- Annotate
+     |     Open Images…  →  labels saved to workspace/labels/<folder>_labels/
+     |     Auto-Detect / Click-to-Segment / draw (N)
+     |     assign class (0–9)  →  Save (S)
+     |     Create train / val / test  →  folder with data.yaml
      |
-     +--> Auto-Detect (ON)     →  polygons pre-filled
-     |
-     +--> model found it       →  fix class / nudge vertices if needed
-     |
-     +--> model missed it      →  Click-to-Segment on that fruit
-     |
-     +--> still not right      →  draw polygon by hand (N)
-     |
-     v
-assign grading class (1–9, 0)
-     |
-     v
-Save (S) / Auto-Save  →  YOLO .txt
-     |
-     v
-next image (← →)
-     |
-     v
-optional: scripts/03_split_dataset.py  then  scripts/04_train.py
+     +-- Train
+           pick .pt  →  pick dataset (last Annotate split or another folder)
+           set epochs / device  →  Start
+           weights → workspace/train/runs/<run-name>/weights/best.pt
 ```
 
-`desktop_app.py` is a PyQt window around the same HTML editor. It starts
+`desktop_app.py` is a PyQt window around the HTML labs. It starts
 `scripts/segment_server.py` in the background:
 
 | Endpoint | Role |
 |---|---|
+| `/` | Home (Annotate or Train) |
+| `/annotate` | label editor |
+| `/train` | training UI |
 | `/detect` | YOLO `segmentation.pt` on the current image |
 | `/segment` | click-to-segment with the selected `.pt` / `.engine` |
 | `/label` | read/write YOLO `.txt` in the labels folder |
 | `/media` | serve images from the folder you opened |
+| `/project/split-dataset` | copy labelled images into train/val/test |
+| `/project/train/*` | start / poll / stop training jobs |
 
 Click models load **lazily** on first click, from `models/dot-pt/` or
 `models/dot-engine/`. `segmentation.pt` is the Auto-Detect model only; it is
 not listed as a click model.
 
-A batch alternative (`02_generate_labels.py` + CVAT) is included if you want
-to process a whole set upfront instead of live, one image at a time.
+A batch alternative (`02_generate_labels.py` + CVAT, then `04_train.py`) is
+included if you want a full-folder pass from the terminal instead of the UI.
 
 ## 1. Setup
 
@@ -158,7 +172,7 @@ Docs: [FastSAM](https://docs.ultralytics.com/models/fast-sam/),
 [MobileSAM](https://docs.ultralytics.com/models/mobile-sam/). Original FastSAM
 paper weights: [CASIA-IVA-Lab/FastSAM](https://github.com/CASIA-IVA-Lab/FastSAM).
 
-In the editor, pick **Format** (`.pt` or `.engine`) then **Model**. Click
+In Annotate, pick **Format** (`.pt` or `.engine`) then **Model**. Click
 models are whatever files are in those folders; extra `.pt` files you add
 will show up too.
 
@@ -177,24 +191,28 @@ keep using `.pt`.
 Do not copy `.engine` files between machines. First engine build can take
 several minutes per model.
 
-### Training start weights (optional)
+### Training start weights
 
-Only needed when you run `scripts/04_train.py`. Ultralytics can fetch this
-on first train, or download it yourself:
+Train can start from `segmentation.pt`, any other `.pt` in `models/dot-pt/`,
+or a previous run. Ultralytics nano-seg is optional if you want a public
+starting point instead of your fruit model:
 
 | File | Download |
 |---|---|
 | `yolo11n-seg.pt` | https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n-seg.pt |
 
-Name is set in `config.py` as `TRAIN_BASE_MODEL`.
+The terminal script `scripts/04_train.py` still uses `TRAIN_BASE_MODEL` in
+`config.py` (default `yolo11n-seg.pt`).
 
-## 3. Using the editor
+## 3. Annotate
 
-1. Start the app. Wait until the editor appears (not the splash screen).
+1. Start the app. From **Home**, open **Annotate**.
 2. **Open Images…** and pick a folder (for example `batch001`).
-   Labels go to `labels/batch001_labels/` automatically. Use **Labels Folder…**
-   only to override that.
-3. For each image:
+   Labels go to `workspace/labels/batch001_labels/` automatically. Use
+   **Labels Folder…** only to override that.
+3. Classes lock after images open so ids cannot change mid-batch. Set up
+   types and class names (or load a profile) **before** opening images.
+4. For each image:
    - **Auto-Detect: ON** (default) — your model pre-fills every object it
      finds as the image loads.
    - Fix a polygon: drag a vertex, double-click an edge to insert a point,
@@ -205,9 +223,25 @@ Name is set in `config.py` as `TRAIN_BASE_MODEL`.
      then assign a class.
    - **N** draws a polygon by hand. **Enter** finishes it, **Esc** cancels.
    - **S** saves, **← / →** move to prev/next (auto-saving if Auto-Save is on).
+5. In the **Dataset** panel, choose an output folder, set train / val / test
+   percentages, and click **Create train / val / test**. Only images with at
+   least one mask are copied. That folder is remembered for Train.
 
 Jump to an image by clicking the number in the header, typing, and pressing
 Enter.
+
+### Where labels sit
+
+| What | Path |
+|---|---|
+| Live YOLO `.txt` for folder `batch001` | `workspace/labels/batch001_labels/` |
+| Class profile catalog | `workspace/profiles/class_profiles.json` |
+| Sidecars in the labels folder | `class_profile.txt`, `classes.txt` |
+| Logs | `workspace/logs/segriotate.log` |
+
+Images stay in the folder you opened. Each image `photo.jpg` gets
+`photo.txt` with the same stem. Older `labels/<folder>_labels/` folders at
+the project root are still reused if they exist.
 
 ### Shortcuts
 
@@ -228,7 +262,37 @@ Enter.
 | Save | `S` |
 | Undo | `Ctrl+Z` / `Cmd+Z` |
 
-## 4. Edit `config.py`
+## 4. Train
+
+1. From **Home**, open **Train** (or use the header link).
+2. **Base Model** — pick weights from the Annotate list (`models/dot-pt/`)
+   or a previous **Trained runs** checkpoint. Or paste / browse a `.pt`.
+3. **Dataset** — **Use last from Annotate**, or choose a folder that already
+   has a YOLO layout (`images/train` + `labels/train`, or `train/images` +
+   `train/labels`). Optionally tick **Use an existing data.yaml**.
+4. **Hyperparameters** — epochs (default 20), image size 640, batch, workers
+   (forced to 0 on Windows), device, optimizer, `lr0` / `lrf`, patience, seed.
+   **Project folder** defaults to `workspace/train/runs`. **Run name** is the
+   subfolder (default `run`).
+5. **Augmentation** — leave geometric values at 0 for a fixed camera. Enable
+   glare aug if lighting varies.
+6. Review the summary, then **Start**. Watch the console. **Stop** kills the
+   current job.
+
+Output:
+
+```
+workspace/train/runs/<run-name>/
+  weights/best.pt
+  weights/last.pt
+```
+
+Those `.pt` files appear under **Trained runs** the next time you open Train,
+so you can fine-tune again. `workspace/train/` is gitignored.
+
+You can save the current form as a named preset and load it later.
+
+## 5. Edit `config.py`
 
 At minimum, check/set:
 
@@ -236,18 +300,20 @@ At minimum, check/set:
   (used by the batch script; the live editor uses `MIN_CONFIDENCE` for detect)
 - `FORCE_CLASS_ID` or `CLASS_MAP` — how old class ids map to your new classes
 - `CLASS_NAMES` — names written into `data.yaml` by `03_split_dataset.py`
-- `CLASS_PROFILES_PATH` — where the editor saves its class profiles
+- `CLASS_PROFILES_PATH` — class profiles (`workspace/profiles/class_profiles.json`)
+- `TRAIN_RUNS_DIR` — where Train writes weights (`workspace/train/runs`)
 
 ### Class profiles
 
-The class list in the editor's left panel can be saved as a named profile in
-`class_profiles.json`. **Load profile** at the top of Classes picks a saved
-list. After you build types and classes, type a name under **Save this list as
-a profile** and click **Save profile** — that name appears in the dropdown next
-to Default and is still there after you relaunch.
+The class list in Annotate's left panel can be saved as a named profile in
+`workspace/profiles/class_profiles.json`. **Load profile** at the top of
+Classes picks a saved list. After you build types and classes, type a name
+under **Save this list as a profile** and click **Save profile** — that name
+appears in the dropdown next to Default and is still there after you relaunch.
 
-The file is plain JSON in the project root — back it up, commit it, or copy it
-to another machine.
+The file is plain JSON — back it up, commit it, or copy it to another machine.
+A copy of an older `class_profiles.json` in the project root is used once if
+the workspace file is missing.
 
 When a labels folder is open, the editor also writes two sidecars there (YOLO
 training ignores them because they do not match an image name):
@@ -274,10 +340,10 @@ Default subclasses (ids written to YOLO `.txt`):
 | 8 | Processing | Non-Market (NMR) |
 | 9 | Reject | Non-Market (NMR) |
 
-## 5. Optional batch pipeline
+## 6. Optional batch pipeline
 
 Use this if you want a full-folder pass and CVAT review instead of live
-grading.
+grading, or to train from the terminal instead of the Train lab.
 
 ```bash
 python scripts/00_diagnose.py          # check the .pt is a seg model
@@ -309,15 +375,15 @@ interpolation, etc). Use with the batch script, not the live editor:
 Then run `03_split_dataset.py`.
 
 `03_split_dataset.py` looks for `.txt` files in `labels/` first, then falls
-back to `output/labels_auto/`. If you labelled in the live editor, copy or
-point it at `labels/<folder>_labels/` as needed.
+back to `output/labels_auto/`. If you labelled in Annotate, copy or point it
+at `workspace/labels/<folder>_labels/` as needed.
 
-## 6. Notes
+## 7. Notes
 
 - If your existing model's masks are roughly 90%+ accurate, this saves most
   of the annotation time. If they are well under 70%, it is usually faster
-  to label a smaller seed set by hand, retrain, and re-run with the improved
-  model.
+  to label a smaller seed set by hand, retrain in **Train**, drop `best.pt`
+  in as Auto-Detect, and continue.
 - `CLASS_MAP` drops any class id not listed — add an identity entry
   (e.g. `4: 4`) for classes you want to keep unchanged.
 - `.pt` files run on Mac / PC / Orin. `.engine` files are built on the

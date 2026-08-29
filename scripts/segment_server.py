@@ -1,9 +1,10 @@
 """
 Local inference + UI server for Segri-Labs.
 
-1. /          -- home (Annotate or Train)
-2. /annotate  -- the label editor (HTML)
-3. /train     -- YOLO training UI
+1. /          -- home (Sort, Annotate, or Train)
+2. /sort      -- unsupervised similarity bins (beta)
+3. /annotate  -- the label editor (HTML)
+4. /train     -- YOLO training UI
 4. /detect    -- YOLO segmentation.pt on the current image
 5. /segment   -- click-to-segment fallback (.pt or .engine: FastSAM, MobileSAM, …)
 6. /label     -- read/write YOLO .txt files in labels/
@@ -36,6 +37,9 @@ import config  # noqa: E402
 _TRAIN_DIR = config.PROJECT_ROOT / "labs" / "train"
 if str(_TRAIN_DIR) not in sys.path:
     sys.path.insert(0, str(_TRAIN_DIR))
+_SORT_DIR = config.PROJECT_ROOT / "labs" / "sort"
+if str(_SORT_DIR) not in sys.path:
+    sys.path.insert(0, str(_SORT_DIR))
 from flask import Flask, abort, jsonify, request, send_from_directory  # noqa: E402
 from flask_cors import CORS  # noqa: E402
 from PIL import Image  # noqa: E402
@@ -50,6 +54,7 @@ from job_manager import job_manager  # noqa: E402
 from model_registry import detect_devices, list_model_groups  # noqa: E402
 from app_paths import default_runs_dir  # noqa: E402
 import presets as train_presets  # noqa: E402
+import job as sort_job  # noqa: E402
 
 PORT = getattr(config, "SERVER_PORT", 8765)
 PT_DIR = config.PROJECT_ROOT / "models" / "dot-pt"
@@ -116,6 +121,11 @@ _labels_dir: Path | None = None
 def get_images_dir() -> Path | None:
     """Only the folder the user picked — never a project default."""
     return _images_dir
+
+
+def clear_images_dir() -> None:
+    global _images_dir
+    _images_dir = None
 
 
 def _set_boot_message(msg: str) -> None:
@@ -187,6 +197,9 @@ def set_images_dir(path: str | Path) -> Path:
         raise ValueError(f"not a directory: {folder}")
     _images_dir = folder
     set_labels_dir(paired_labels_dir(folder))
+    sort_job.reveal_folder()
+    # A newly picked dump is the whole folder, not the last Sort bin.
+    sort_job.set_session(None)
     return folder
 
 
@@ -231,6 +244,17 @@ def ensure_label_files() -> int:
 
 
 def effective_labels_dir() -> Path:
+    """Folder YOLO .txt files are written to.
+
+    When an images folder is open, prefer its paired labels dir
+    (workspace/labels/<folder>_labels) unless the user picked a different one.
+    """
+    images = get_images_dir()
+    if images is not None:
+        paired = paired_labels_dir(images)
+        if _labels_dir is None or _labels_dir.resolve() == paired.resolve():
+            return paired
+        return _labels_dir
     return _labels_dir if _labels_dir is not None else config.LABEL_DIR
 
 
@@ -314,6 +338,12 @@ def read_class_profiles() -> dict:
         return empty_class_profiles()
     if not isinstance(data, dict) or not isinstance(data.get("profiles"), dict):
         return empty_class_profiles()
+    profiles = data.get("profiles") or {}
+    if "Sort bins" in profiles:
+        profiles.pop("Sort bins", None)
+        if data.get("active") == "Sort bins":
+            data["active"] = next(iter(profiles), "")
+        data["profiles"] = profiles
     return data
 
 
@@ -553,6 +583,11 @@ def train_page():
     return send_from_directory(TOOLS_DIR, "trainer.html")
 
 
+@app.route("/sort")
+def sort_page():
+    return send_from_directory(TOOLS_DIR, "sorter.html")
+
+
 @app.route("/labs.css")
 def labs_css():
     return send_from_directory(TOOLS_DIR, "labs.css")
@@ -604,6 +639,8 @@ def project_images_dir():
 def project_labels_dir():
     if request.method == "GET":
         folder = get_labels_dir()
+        if folder is None and get_images_dir() is not None:
+            folder = effective_labels_dir()
         return jsonify({
             "dir": str(folder) if folder else None,
             "effective": str(effective_labels_dir()),
@@ -634,8 +671,11 @@ def project_class_profiles():
         cleaned = clean_class_profile(value)
         if label and cleaned is not None:
             profiles[label] = cleaned
-    if not profiles:
-        return jsonify({"error": "profiles must not be empty"}), 400
+    existing = read_class_profiles()
+    # A stale Annotate page load used to POST {} and wipe saved profiles.
+    # Only allow an empty catalog when the user explicitly deleted the last one.
+    if not profiles and (existing.get("profiles") or {}) and not payload.get("allow_empty"):
+        return jsonify({"ok": True, "path": str(CLASS_PROFILES_PATH), **existing})
     active = str(payload.get("active") or "").strip()
     if active not in profiles:
         active = next(iter(profiles), "")
@@ -889,6 +929,218 @@ def train_stop(job_id):
     if not ok:
         return jsonify({"error": "Job not running or not found"}), 400
     return jsonify({"stopped": True})
+
+
+def _clean_bins(raw) -> list[dict]:
+    bins = []
+    if not isinstance(raw, list):
+        return bins
+    seen_ids = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        bin_id = str(item.get("id") or "").strip() or f"bin-{len(bins)}"
+        if bin_id in seen_ids:
+            bin_id = f"{bin_id}-{len(bins)}"
+        seen_ids.add(bin_id)
+        stems = []
+        for stem in item.get("stems") or []:
+            name = Path(str(stem)).name
+            if name and name not in {".", ".."}:
+                stems.append(name)
+        bins.append({
+            "id": bin_id,
+            "name": str(item.get("name") or "").strip(),
+            "unsorted": bool(item.get("unsorted")),
+            "stems": stems,
+        })
+    return bins
+
+
+def _labeled_stems(labels_dir: Path | None) -> set[str]:
+    if labels_dir is None or not labels_dir.is_dir():
+        return set()
+    found: set[str] = set()
+    for path in labels_dir.glob("*.txt"):
+        if path.stem in LABEL_SIDECAR_STEMS:
+            continue
+        try:
+            if path.read_text(encoding="utf-8").strip():
+                found.add(path.stem)
+        except OSError:
+            continue
+    return found
+
+
+def _mark_bins_annotated(bins: list[dict]) -> list[dict]:
+    images = get_images_dir()
+    labels = get_labels_dir()
+    if images is not None:
+        labels = effective_labels_dir()
+    elif labels is None:
+        labels = None
+    labeled = _labeled_stems(labels)
+    marked = []
+    for item in bins:
+        stems = item.get("stems") or []
+        annotated = bool(stems) and all(stem in labeled for stem in stems)
+        marked.append({**item, "annotated": annotated})
+    return marked
+
+
+@app.route("/project/sort/status")
+def sort_status():
+    if sort_job.folder_hidden():
+        return jsonify({
+            **sort_job.status(),
+            "images_dir": None,
+            "files": [],
+            "bins": None,
+            "saved_embedder": None,
+        })
+    images = get_images_dir()
+    saved = sort_job.load_bins(images) if images else None
+    bins = _mark_bins_annotated(_clean_bins((saved or {}).get("bins"))) if saved else None
+    return jsonify({
+        **sort_job.status(),
+        "images_dir": str(images) if images else None,
+        "files": list_image_files(),
+        "bins": bins,
+        "saved_embedder": (saved or {}).get("embedder") if saved else None,
+    })
+
+
+@app.route("/project/sort/run", methods=["POST", "OPTIONS"])
+def sort_run():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    images = get_images_dir()
+    files = list_image_files()
+    if images is None:
+        return jsonify({"error": "open an images folder first"}), 400
+    if not files:
+        return jsonify({"error": "no images in that folder"}), 400
+    ok = sort_job.start(files, images, detect_model)
+    if not ok:
+        return jsonify({"error": "a sort is already running"}), 409
+    return jsonify({"ok": True, **sort_job.status()})
+
+
+@app.route("/project/sort/clear", methods=["POST", "OPTIONS"])
+def sort_clear():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    result = sort_job.clear_cache(get_images_dir())
+    if not result.get("ok"):
+        return jsonify(result), 409
+    clear_images_dir()
+    return jsonify(result)
+
+
+@app.route("/project/sort/bins", methods=["GET", "PUT", "OPTIONS"])
+def sort_bins():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    images = get_images_dir()
+    if images is None:
+        return jsonify({"error": "open an images folder first"}), 400
+    if request.method == "GET":
+        saved = sort_job.load_bins(images) or {"bins": [], "embedder": ""}
+        bins = _mark_bins_annotated(_clean_bins(saved.get("bins")))
+        return jsonify({
+            "ok": True,
+            "images_dir": str(images),
+            "embedder": saved.get("embedder") or "",
+            "bins": bins,
+        })
+    data = request.get_json(force=True, silent=True) or {}
+    bins = _clean_bins(data.get("bins"))
+    saved = sort_job.load_bins(images) or {}
+    payload = {
+        "images_dir": str(images),
+        "embedder": str(data.get("embedder") or saved.get("embedder") or ""),
+        "bins": bins,
+    }
+    path = sort_job.save_bins(images, payload)
+    return jsonify({
+        "ok": True,
+        "path": str(path),
+        **payload,
+        "bins": _mark_bins_annotated(bins),
+    })
+
+
+@app.route("/project/sort/session", methods=["GET", "POST", "OPTIONS"])
+def sort_session():
+    if request.method == "OPTIONS":
+        return ("", 204)
+    if request.method == "POST":
+        data = request.get_json(force=True, silent=True) or {}
+        if data.get("clear"):
+            sort_job.set_session(None)
+            return jsonify({"ok": True, "session": None})
+        return jsonify({"error": "unknown session action"}), 400
+    session = sort_job.get_session()
+    if not session:
+        return jsonify({"ok": False, "session": None})
+    images = session.get("images_dir")
+    labels = session.get("labels_dir")
+    try:
+        if images and Path(str(images)).is_dir():
+            current = get_images_dir()
+            wanted = Path(str(images)).expanduser().resolve()
+            if current is None or current.resolve() != wanted:
+                set_images_dir(wanted)
+        if labels:
+            set_labels_dir(labels)
+        elif get_images_dir() is not None:
+            set_labels_dir(paired_labels_dir(get_images_dir()))
+    except (TypeError, ValueError, OSError):
+        pass
+    session = {
+        **session,
+        "images_dir": str(get_images_dir()) if get_images_dir() else images,
+        "labels_dir": str(get_labels_dir()) if get_labels_dir() else labels,
+    }
+    sort_job.set_session(session)
+    return jsonify({"ok": True, "session": session})
+
+
+@app.route("/project/sort/apply", methods=["POST", "OPTIONS"])
+def sort_apply():
+    """Open one bin in Annotate. Classes stay in the editor — Sort does not create them."""
+    if request.method == "OPTIONS":
+        return ("", 204)
+    images = get_images_dir()
+    if images is None:
+        return jsonify({"error": "open an images folder first"}), 400
+    data = request.get_json(force=True, silent=True) or {}
+    bins = _clean_bins(data.get("bins"))
+    if not bins:
+        saved = sort_job.load_bins(images) or {}
+        bins = _clean_bins(saved.get("bins"))
+    bin_id = str(data.get("bin_id") or "").strip()
+    chosen = next((item for item in bins if item["id"] == bin_id), None)
+    if chosen is None or not chosen["stems"]:
+        return jsonify({"error": "that bin has no images"}), 400
+    saved = sort_job.load_bins(images) or {}
+    sort_job.save_bins(images, {
+        "images_dir": str(images),
+        "embedder": str(data.get("embedder") or saved.get("embedder") or ""),
+        "bins": bins,
+    })
+    try:
+        set_labels_dir(paired_labels_dir(images))
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
+    session = {
+        "images_dir": str(images),
+        "labels_dir": str(get_labels_dir()) if get_labels_dir() else None,
+        "bin_id": chosen["id"],
+        "stems": chosen["stems"],
+    }
+    sort_job.set_session(session)
+    return jsonify({"ok": True, "session": session, "annotate": "/annotate?from=sort"})
 
 
 @app.route("/project/label-stats", methods=["GET", "OPTIONS"])

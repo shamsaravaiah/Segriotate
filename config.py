@@ -32,6 +32,7 @@ TRAIN_RUNS_DIR = TRAIN_ROOT / "runs"
 TRAIN_PRESETS_DIR = TRAIN_ROOT / "presets"
 TRAIN_SCRATCH_DIR = TRAIN_ROOT / "job_scratch"
 TRAIN_CACHE_DIR = TRAIN_ROOT / "cache"
+SORT_ROOT = WORKSPACE / "sort"
 
 MODEL_PATH = PROJECT_ROOT / "models" / "dot-pt" / "segmentation.pt"   # your existing YOLO-seg model
 MODEL_PT_DIR = PROJECT_ROOT / "models" / "dot-pt"
@@ -131,6 +132,7 @@ def ensure_workspace() -> None:
     TRAIN_PRESETS_DIR.mkdir(parents=True, exist_ok=True)
     TRAIN_SCRATCH_DIR.mkdir(parents=True, exist_ok=True)
     (TRAIN_CACHE_DIR / "datasets").mkdir(parents=True, exist_ok=True)
+    SORT_ROOT.mkdir(parents=True, exist_ok=True)
     if not CLASS_PROFILES_PATH.is_file() and LEGACY_CLASS_PROFILES_PATH.is_file():
         shutil.copy2(LEGACY_CLASS_PROFILES_PATH, CLASS_PROFILES_PATH)
 
