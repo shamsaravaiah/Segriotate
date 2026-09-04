@@ -2,7 +2,7 @@
 Local inference + UI server for Segriotate.
 
 1. /          -- the label editor (HTML)
-2. /detect    -- YOLO segmentation.pt on the current image
+2. /detect    -- Auto-Detect full-image seg (chosen YOLO-seg or FastSAM weight)
 3. /segment   -- click-to-segment fallback (.pt or .engine: FastSAM, MobileSAM, …)
 4. /label     -- read/write YOLO .txt files in labels/
 5. /project/label-stats -- mask/image counts per class in the labels folder
@@ -48,6 +48,7 @@ CLICK_FORMATS = ("pt", "engine")
 DEFAULT_CLICK_FORMAT = "pt"
 CLICK_SKIP_STEMS = {"segmentation"}  # Auto-Detect YOLO, not a click model
 CLICK_LABELS = {
+    "segmentation": "YOLO-seg",
     "FastSAM-s": "FastSAM",
     "FastSAM-x": "FastSAM-x",
     "mobile_sam": "MobileSAM",
@@ -81,7 +82,6 @@ def add_cors_headers(resp):
 PT_DIR.mkdir(parents=True, exist_ok=True)
 ENGINE_DIR.mkdir(parents=True, exist_ok=True)
 
-detect_model = None
 _boot = {
     "ready": False,
     "fatal": None,
@@ -90,6 +90,8 @@ _boot = {
 _boot_started = False
 _click_models: dict = {}
 _click_lock = threading.Lock()
+_detect_models: dict = {}
+_detect_lock = threading.Lock()
 
 _images_dir: Path | None = None
 _labels_dir: Path | None = None
@@ -106,28 +108,17 @@ def _set_boot_message(msg: str) -> None:
 
 
 def _boot_models() -> None:
-    global detect_model
     try:
         _set_boot_message("Launching app. Please wait")
         ensure_models(_set_boot_message)
         ensure_engines(_set_boot_message)
-        if not config.MODEL_PATH.exists():
-            _set_boot_message(
-                "Starting editor. Copy segmentation.pt into models/dot-pt for Auto-Detect."
-            )
-            _boot["ready"] = True
-            return
-        _set_boot_message("Loading Auto-Detect model…")
-        from ultralytics import YOLO  # local import so Flask can bind first
-
-        detect_model = YOLO(str(config.MODEL_PATH))
-        if detect_model.task != "segment":
-            raise RuntimeError(
-                f"{config.MODEL_PATH} is a '{detect_model.task}' model, not a segmentation model."
-            )
         _set_boot_message("Ready")
         _boot["ready"] = True
-        print("Click-to-segment models load on first use from models/dot-pt or models/dot-engine.\n")
+        print(
+            "Auto-Detect and click-to-segment models load on first use "
+            "from models/dot-pt or models/dot-engine.\n",
+            flush=True,
+        )
     except Exception as e:
         _boot["fatal"] = str(e)
         _set_boot_message(f"Failed to start: {e}")
@@ -181,31 +172,7 @@ def set_labels_dir(path: str | Path) -> Path:
     if not folder.is_dir():
         raise ValueError(f"not a directory: {folder}")
     _labels_dir = folder
-    ensure_label_files()
     return folder
-
-
-def ensure_label_files() -> int:
-    """Give every image an empty .txt so labels map 1:1 onto the images."""
-    if get_images_dir() is None or _labels_dir is None:
-        return 0
-    existing = {
-        p.stem for p in _labels_dir.glob("*.txt")
-        if p.stem not in LABEL_SIDECAR_STEMS
-    }
-    created = 0
-    for item in list_image_files():
-        stem = item["stem"]
-        if stem in existing or stem in LABEL_SIDECAR_STEMS:
-            continue
-        try:
-            (_labels_dir / f"{stem}.txt").write_text("", encoding="utf-8")
-        except OSError:
-            continue
-        created += 1
-    if created:
-        print(f"Created {created} empty labels in {_labels_dir}", flush=True)
-    return created
 
 
 def effective_labels_dir() -> Path:
@@ -420,6 +387,96 @@ def get_click_model(fmt: str, stem: str):
         return cache_key, _click_models[cache_key], spec
 
 
+def list_detect_models(fmt: str) -> list[dict]:
+    """YOLO-seg and FastSAM weights suitable for full-image Auto-Detect."""
+    folder = click_format_dir(fmt)
+    suffix = f".{fmt}"
+    items = []
+    if not folder.is_dir():
+        return items
+    for p in sorted(folder.iterdir(), key=lambda x: x.name.lower()):
+        if not p.is_file() or p.suffix.lower() != suffix:
+            continue
+        kind = click_kind(p.stem)
+        if kind not in {"yolo", "fastsam"}:
+            continue
+        items.append({
+            "id": p.stem,
+            "label": click_label(p.stem),
+            "file": p.name,
+            "kind": kind,
+        })
+    return items
+
+
+def get_detect_model(fmt: str, stem: str):
+    """Lazy-load an Auto-Detect model from models/dot-pt or models/dot-engine."""
+    fmt = str(fmt or DEFAULT_CLICK_FORMAT).strip().lower()
+    stem = Path(str(stem or "")).name
+    if fmt not in CLICK_FORMATS:
+        raise ValueError(f"unknown detect format: {fmt}")
+    if not stem or stem in {".", ".."}:
+        raise ValueError("unknown detect model")
+    kind = click_kind(stem)
+    if kind not in {"yolo", "fastsam"}:
+        raise ValueError(f"{stem} is not a full-image Auto-Detect model (use Click-to-Segment)")
+    path = (click_format_dir(fmt) / f"{stem}.{fmt}").resolve()
+    folder = click_format_dir(fmt).resolve()
+    if path.parent != folder:
+        raise ValueError("invalid detect model path")
+    if not path.is_file():
+        raise ValueError(f"model not found: {path}")
+    cache_key = f"{fmt}:{stem}"
+    spec = {"file": path.name, "kind": kind, "label": click_label(stem), "path": path}
+    with _detect_lock:
+        if cache_key not in _detect_models:
+            print(f"Loading {path} for Auto-Detect...")
+            from ultralytics import FastSAM, YOLO
+
+            path_str = str(path)
+            if kind == "fastsam":
+                _detect_models[cache_key] = FastSAM(path_str)
+            else:
+                model = YOLO(path_str)
+                task = getattr(model, "task", None)
+                if task is not None and task != "segment":
+                    raise ValueError(
+                        f"{path.name} is a '{task}' model, not a segmentation model."
+                    )
+                _detect_models[cache_key] = model
+            print(f"{spec['label']} ({fmt}) loaded for Auto-Detect.")
+        return cache_key, _detect_models[cache_key], spec
+
+
+def results_to_objects(results) -> list[dict]:
+    """Convert Ultralytics masks to normalized polygon objects for the editor."""
+    objects = []
+    result = results[0] if results else None
+    if result is None or result.masks is None:
+        return objects
+    has_boxes = result.boxes is not None and result.boxes.cls is not None
+    for i, polygon in enumerate(result.masks.xyn):
+        if has_boxes and i < len(result.boxes.cls):
+            old_id = int(result.boxes.cls[i].item())
+        else:
+            old_id = 0
+        new_id = remap_class(old_id)
+        if new_id is None:
+            continue
+        pts = polygon.tolist()
+        if len(pts) < 3:
+            continue
+        objects.append({"classId": new_id, "points": pts})
+    return objects
+
+
+def run_detect_predict(kind: str, model, img, conf: float):
+    """Full-image inference for Auto-Detect (no click prompt)."""
+    if kind == "fastsam":
+        return model(img, conf=conf, verbose=False)
+    return model.predict(img, conf=conf, verbose=False)
+
+
 def _has_mask(results) -> bool:
     result = results[0] if results else None
     return result is not None and result.masks is not None and len(result.masks) > 0
@@ -483,8 +540,9 @@ def health():
         "ready": bool(_boot["ready"]),
         "message": _boot["message"],
         "error": _boot["fatal"],
-        "detect_model": str(config.MODEL_PATH),
-        "detect_loaded": detect_model is not None,
+        "detect_models_pt": list_detect_models("pt"),
+        "detect_models_engine": list_detect_models("engine"),
+        "detect_models_loaded": sorted(_detect_models),
         "click_models_pt": list_click_models("pt"),
         "click_models_engine": list_click_models("engine"),
         "click_models_loaded": sorted(_click_models),
@@ -501,6 +559,17 @@ def click_models():
         "formats": list(CLICK_FORMATS),
         "pt": list_click_models("pt"),
         "engine": list_click_models("engine"),
+        "dirs": {"pt": str(PT_DIR), "engine": str(ENGINE_DIR)},
+    })
+
+
+@app.route("/detect-models")
+def detect_models():
+    """List full-image Auto-Detect weights (YOLO-seg + FastSAM)."""
+    return jsonify({
+        "formats": list(CLICK_FORMATS),
+        "pt": list_detect_models("pt"),
+        "engine": list_detect_models("engine"),
         "dirs": {"pt": str(PT_DIR), "engine": str(ENGINE_DIR)},
     })
 
@@ -694,41 +763,36 @@ def label():
 
 @app.route("/detect", methods=["POST"])
 def detect():
-    """Run the user's own model on one image, return all detected polygons."""
+    """Run the selected Auto-Detect model on one image, return all polygons."""
     data = request.get_json(force=True)
     try:
         img = decode_image(data["image"])
     except Exception as e:
         return jsonify({"error": f"could not decode image: {e}"}), 400
 
+    if not _boot["ready"]:
+        return jsonify({"error": _boot["message"] or "Launching app. Please wait"}), 503
+
     conf = float(data.get("conf", config.MIN_CONFIDENCE))
 
-    if detect_model is None:
-        if not _boot["ready"]:
-            return jsonify({"error": _boot["message"] or "Launching app. Please wait"}), 503
-        return jsonify({
-            "error": "Auto-Detect model not loaded. Put segmentation.pt in models/dot-pt.",
-        }), 503
+    try:
+        key, model, spec = get_detect_model(
+            data.get("format", DEFAULT_CLICK_FORMAT),
+            data.get("model", ""),
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     try:
-        results = detect_model.predict(img, conf=conf, verbose=False)
+        results = run_detect_predict(spec["kind"], model, img, conf)
     except Exception as e:
         return jsonify({"error": f"inference failed: {e}"}), 500
 
-    result = results[0]
-    objects = []
-    if result.masks is not None and result.boxes is not None:
-        for polygon, cls_tensor in zip(result.masks.xyn, result.boxes.cls):
-            old_id = int(cls_tensor.item())
-            new_id = remap_class(old_id)
-            if new_id is None:
-                continue
-            pts = polygon.tolist()
-            if len(pts) < 3:
-                continue
-            objects.append({"classId": new_id, "points": pts})
-
-    return jsonify({"objects": objects})
+    return jsonify({
+        "objects": results_to_objects(results),
+        "model": key,
+        "label": spec["label"],
+    })
 
 
 @app.route("/segment", methods=["POST"])

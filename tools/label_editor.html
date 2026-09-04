@@ -46,6 +46,28 @@
   header .progress-input:disabled { opacity: 0.35; cursor: not-allowed; }
   header .progress-sep { color: var(--accent); }
 
+  #helpOverlay {
+    display: none; position: fixed; inset: 0; z-index: 1000;
+    background: rgba(8, 10, 14, 0.55); align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  #helpOverlay.open { display: flex; }
+  #helpPanel {
+    width: min(440px, 100%); max-height: min(80vh, 640px); overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+    padding: 18px 18px 14px; box-shadow: 0 16px 48px rgba(0,0,0,0.45);
+  }
+  #helpPanel h2 {
+    margin: 0 0 14px 0; font-size: 14px; font-weight: 600; letter-spacing: 0.02em;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  #helpPanel .help-group-title {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-faint);
+    font-weight: 700; margin: 14px 0 6px 0;
+  }
+  #helpPanel .help-group-title:first-of-type { margin-top: 0; }
+  #helpCloseBtn { padding: 5px 10px; }
+
   button {
     font-family: var(--sans); font-size: 12px; font-weight: 600; letter-spacing: 0.01em;
     background: var(--panel-2); color: var(--text); border: 1px solid var(--border);
@@ -77,6 +99,17 @@
     margin: 0 0 10px 0; font-weight: 700;
   }
   .block { margin-bottom: 22px; }
+  details.collapsible > summary.section-title {
+    list-style: none; cursor: pointer; user-select: none;
+    display: flex; align-items: center; gap: 6px; margin-bottom: 0;
+  }
+  details.collapsible[open] > summary.section-title { margin-bottom: 10px; }
+  details.collapsible > summary.section-title::-webkit-details-marker { display: none; }
+  details.collapsible > summary.section-title::before {
+    content: "▶"; font-size: 8px; color: var(--text-faint);
+    transition: transform .12s;
+  }
+  details.collapsible[open] > summary.section-title::before { transform: rotate(90deg); }
 
   .class-group-header {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-faint);
@@ -190,7 +223,7 @@
   .polygon-item .pi-verts { color: var(--text-faint); font-family: var(--mono); font-size: 10.5px; margin-top: 2px; }
 
   .class-counts-head, .class-counts-row {
-    display: grid; grid-template-columns: minmax(0, 1fr) 3.2em 3.6em;
+    display: grid; grid-template-columns: minmax(0, 1fr) 2.8em 3.2em 3.2em;
     gap: 6px; align-items: center; font-size: 11.5px;
   }
   .class-counts-head {
@@ -199,6 +232,7 @@
   }
   .class-counts-head span:nth-child(2),
   .class-counts-head span:nth-child(3),
+  .class-counts-head span:nth-child(4),
   .class-counts-row .cc-num { text-align: right; font-family: var(--mono); }
   .class-counts-row { padding: 3px 4px; border-radius: 4px; color: var(--text-dim); }
   .class-counts-row .cc-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -206,6 +240,15 @@
   .class-counts-row.cc-zero { color: var(--text-faint); }
   .class-counts-summary {
     font-size: 11px; color: var(--text-faint); padding: 8px 4px 0; line-height: 1.45;
+  }
+  .class-counts-analytics {
+    font-size: 11px; color: var(--text-dim); padding: 6px 4px 0; line-height: 1.55;
+    font-family: var(--mono);
+  }
+  .class-counts-analytics .cca-label {
+    font-family: inherit; color: var(--text-faint);
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700;
+    margin-bottom: 4px;
   }
   .class-counts-group {
     font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
@@ -233,6 +276,7 @@
       <span class="progress-sep">/</span>
       <span id="progressTotal"></span>
     </span>
+    <button id="helpBtn" type="button" title="Keyboard and mouse help">Help</button>
   </header>
 
   <aside class="left">
@@ -259,21 +303,42 @@
       </div>
       <button id="autoSaveBtn" class="primary" style="width:100%; margin-top:6px;">Auto-Save: ON</button>
       <button id="clickSegmentBtn" class="primary" style="width:100%; margin-top:6px;" disabled>Click-to-Segment: ON</button>
-      <div class="hint" style="margin-top:8px;">Format</div>
-      <select id="clickFormatSelect" title="Click-to-Segment weight format" disabled>
-        <option value="pt">.pt (PyTorch)</option>
-        <option value="engine">.engine (TensorRT)</option>
-      </select>
-      <div class="hint" style="margin-top:8px;">Model</div>
-      <select id="clickModelSelect" title="Click-to-Segment model" disabled>
-        <option value="">No models found</option>
-      </select>
+      <div class="row" style="margin-top:8px;">
+        <div style="flex: 0.85; min-width: 0;">
+          <div class="hint">Format</div>
+          <select id="clickFormatSelect" title="Click-to-Segment weight format" disabled>
+            <option value="pt">.pt (PyTorch)</option>
+            <option value="engine">.engine (TensorRT)</option>
+          </select>
+        </div>
+        <div style="flex: 1.15; min-width: 0;">
+          <div class="hint">Model</div>
+          <select id="clickModelSelect" title="Click-to-Segment model" disabled>
+            <option value="">No models found</option>
+          </select>
+        </div>
+      </div>
       <button id="autoDetectBtn" class="primary" style="width:100%; margin-top:6px;" disabled>Auto-Detect: ON</button>
+      <div class="row" style="margin-top:8px;">
+        <div style="flex: 0.85; min-width: 0;">
+          <div class="hint">Format</div>
+          <select id="detectFormatSelect" title="Auto-Detect weight format" disabled>
+            <option value="pt">.pt (PyTorch)</option>
+            <option value="engine">.engine (TensorRT)</option>
+          </select>
+        </div>
+        <div style="flex: 1.15; min-width: 0;">
+          <div class="hint">Model</div>
+          <select id="detectModelSelect" title="Auto-Detect model" disabled>
+            <option value="">No models found</option>
+          </select>
+        </div>
+      </div>
       <div id="segmentStatus" style="font-size:11px; color:var(--text-faint); margin-top:6px; line-height:1.5;"></div>
     </div>
 
-    <div class="block">
-      <div class="section-title">Classes</div>
+    <details class="block collapsible">
+      <summary class="section-title">Classes</summary>
 
       <div class="class-profile">
         <div class="hint">Load profile</div>
@@ -287,8 +352,8 @@
 
       <div id="classList"></div>
 
-      <div class="class-create">
-        <div class="hint">Class type (section)</div>
+      <details class="collapsible class-create">
+        <summary class="section-title">Class type (section)</summary>
         <div class="row">
           <input type="text" id="newGroupInput" placeholder="e.g. Variety">
           <button id="addGroupBtn">Add type</button>
@@ -299,7 +364,7 @@
           <input type="text" id="newClassInput" placeholder="class name">
           <button id="addClassBtn">Add class</button>
         </div>
-      </div>
+      </details>
 
       <div class="class-save">
         <div class="hint">Save this list as a profile</div>
@@ -318,21 +383,23 @@
         Add as many types and classes as you need. Colors are assigned automatically and match the mask on the image. Custom stays as a type you can always add to.
         Click a class to <b style="color:var(--text-dim); font-weight:600">replace</b> the selected mask’s class; Shift-click to <b style="color:var(--text-dim); font-weight:600">add</b> another class to it.
       </div>
-    </div>
+    </details>
 
-    <div class="block">
-      <div class="section-title">Class counts</div>
+    <details class="block collapsible">
+      <summary class="section-title">Class counts</summary>
       <div class="class-counts-head">
         <span></span>
         <span title="Masks on this image">img</span>
-        <span title="Masks in this image folder">folder</span>
+        <span title="Masks in this image folder">masks</span>
+        <span title="Images containing this class (sample size)">imgs</span>
       </div>
       <div id="classCountsBody"></div>
       <div id="classCountsSummary" class="class-counts-summary">Open images to count masks per class.</div>
-    </div>
+      <div id="classCountsAnalytics" class="class-counts-analytics" hidden></div>
+    </details>
 
-    <div class="block">
-      <div class="section-title">Dataset</div>
+    <details class="block collapsible">
+      <summary class="section-title">Dataset</summary>
       <div class="class-empty" style="padding:0 0 8px;">Copies only images that have at least one mask. Empty photos are skipped. Training is not run in this app.</div>
       <button id="chooseDatasetBtn" style="width:100%;">Choose folder…</button>
       <input type="text" id="datasetPathInput" placeholder="or paste a folder path" style="margin-top:6px;" title="Folder that will contain images/train, images/val, images/test">
@@ -355,27 +422,7 @@
       <input type="number" id="splitSeedInput" min="0" step="1" value="42" title="Same seed gives the same split">
       <button id="createDatasetBtn" class="primary" style="width:100%; margin-top:8px;">Create train / val / test</button>
       <div id="datasetStatus" class="class-counts-summary"></div>
-    </div>
-
-    <div class="block">
-      <div class="section-title">Shortcuts</div>
-      <div class="shortcut"><span>Click fruit to segment</span><kbd>click</kbd></div>
-      <div class="shortcut"><span>New polygon</span><kbd>N</kbd></div>
-      <div class="shortcut"><span>Finish polygon</span><kbd>Enter</kbd></div>
-      <div class="shortcut"><span>Cancel / deselect</span><kbd>Esc</kbd></div>
-      <div class="shortcut"><span>Delete polygon</span><kbd>Del</kbd></div>
-      <div class="shortcut"><span>Replace class 0–9</span><kbd>0…9</kbd></div>
-      <div class="shortcut"><span>Add extra class</span><kbd>Shift+0…9</kbd></div>
-      <div class="shortcut"><span>Insert vertex</span><kbd>dbl-click edge</kbd></div>
-      <div class="shortcut"><span>Delete vertex</span><kbd>right-click vertex</kbd></div>
-      <div class="shortcut"><span>Pan</span><kbd>scroll / two-finger</kbd></div>
-      <div class="shortcut"><span>Pan (drag)</span><kbd>right-drag / space-drag</kbd></div>
-      <div class="shortcut"><span>Pan (keys)</span><kbd>Shift+←↑→↓</kbd></div>
-      <div class="shortcut"><span>Zoom</span><kbd>+ / −</kbd></div>
-      <div class="shortcut"><span>Prev / next image</span><kbd>← →</kbd></div>
-      <div class="shortcut"><span>Save</span><kbd>S</kbd></div>
-      <div class="shortcut"><span>Undo</span><kbd>Ctrl+Z</kbd></div>
-    </div>
+    </details>
   </aside>
 
   <section class="stage" id="stage">
@@ -402,6 +449,34 @@
     <span id="reviewedCount"></span>
     <span id="zoomLabel"></span>
   </footer>
+</div>
+
+<div id="helpOverlay" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+  <div id="helpPanel">
+    <h2 id="helpTitle">Help
+      <button id="helpCloseBtn" type="button">Close</button>
+    </h2>
+    <div class="help-group-title">Navigate</div>
+    <div class="shortcut"><span>Zoom in / out</span><kbd>scroll</kbd></div>
+    <div class="shortcut"><span>Zoom</span><kbd>+ / −</kbd></div>
+    <div class="shortcut"><span>Pan while scrolling</span><kbd>Shift+scroll</kbd></div>
+    <div class="shortcut"><span>Pan (drag)</span><kbd>right-drag / space-drag</kbd></div>
+    <div class="shortcut"><span>Pan (keys)</span><kbd>Shift+←↑→↓</kbd></div>
+    <div class="shortcut"><span>Prev / next image</span><kbd>← →</kbd></div>
+    <div class="help-group-title">Segment &amp; draw</div>
+    <div class="shortcut"><span>Click fruit to segment</span><kbd>click</kbd></div>
+    <div class="shortcut"><span>New polygon</span><kbd>N</kbd></div>
+    <div class="shortcut"><span>Finish polygon</span><kbd>Enter</kbd></div>
+    <div class="shortcut"><span>Cancel / deselect</span><kbd>Esc</kbd></div>
+    <div class="shortcut"><span>Insert vertex (add point)</span><kbd>dbl-click edge</kbd></div>
+    <div class="shortcut"><span>Delete vertex</span><kbd>right-click vertex</kbd></div>
+    <div class="shortcut"><span>Delete polygon</span><kbd>Del</kbd></div>
+    <div class="help-group-title">Classes &amp; save</div>
+    <div class="shortcut"><span>Replace class 0–9</span><kbd>0…9</kbd></div>
+    <div class="shortcut"><span>Add extra class</span><kbd>Shift+0…9</kbd></div>
+    <div class="shortcut"><span>Save</span><kbd>S</kbd></div>
+    <div class="shortcut"><span>Undo</span><kbd>Ctrl+Z</kbd></div>
+  </div>
 </div>
 
 <input type="file" id="fallbackImagesInput" webkitdirectory multiple style="display:none">
@@ -479,6 +554,9 @@
     clickModel: "",
     clickCatalog: { pt: [], engine: [] },
     autoDetect: true,
+    detectFormat: "pt",
+    detectModel: "",
+    detectCatalog: { pt: [], engine: [] },
     autoSave: true,
     segmentServerUrl: (location.protocol === "http:" || location.protocol === "https:")
       ? ""
@@ -770,9 +848,57 @@
     return out;
   }
 
+  function percentileSorted(sorted, p) {
+    if (!sorted.length) return NaN;
+    if (sorted.length === 1) return sorted[0];
+    const idx = (sorted.length - 1) * p;
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    const w = idx - lo;
+    return sorted[lo] * (1 - w) + sorted[hi] * w;
+  }
+
+  function sampleSizeStats(values) {
+    const nums = values.map(Number).filter(n => Number.isFinite(n));
+    if (!nums.length) return null;
+    const sorted = nums.slice().sort((a, b) => a - b);
+    const n = sorted.length;
+    const sum = sorted.reduce((a, b) => a + b, 0);
+    const mean = sum / n;
+    const median = percentileSorted(sorted, 0.5);
+    const q1 = percentileSorted(sorted, 0.25);
+    const q3 = percentileSorted(sorted, 0.75);
+    const iqr = q3 - q1;
+    const freq = new Map();
+    sorted.forEach(v => freq.set(v, (freq.get(v) || 0) + 1));
+    let best = 0;
+    freq.forEach(c => { if (c > best) best = c; });
+    let modeStr = "—";
+    if (best > 1) {
+      const modes = [...freq.entries()].filter(([, c]) => c === best).map(([v]) => v);
+      modeStr = modes.join(", ");
+    }
+    const fmt = (x) => {
+      if (!Number.isFinite(x)) return "—";
+      return Number.isInteger(x) ? String(x) : x.toFixed(1);
+    };
+    return {
+      n,
+      min: sorted[0],
+      max: sorted[n - 1],
+      mean,
+      median,
+      mode: modeStr,
+      iqr,
+      fmt,
+    };
+  }
+
   function refreshCountDisplay() {
     const body = $("classCountsBody");
     const summary = $("classCountsSummary");
+    const analytics = $("classCountsAnalytics");
     if (!body || !summary) return;
     const live = masksFromPolygons();
     const folderMasks = displayedFolderMasks();
@@ -782,26 +908,36 @@
     extraIds.sort((a, b) => a - b);
 
     body.innerHTML = "";
+    if (analytics) {
+      analytics.hidden = true;
+      analytics.innerHTML = "";
+    }
     if (!state.classes.length && !extraIds.length) {
       summary.textContent = "Add classes, then open images to count masks per class.";
       return;
     }
 
+    const sampleIds = [];
+    state.classes.forEach((_, id) => sampleIds.push(id));
+    extraIds.forEach(id => sampleIds.push(id));
+
     const addRow = (id, name) => {
       const here = live[id] || 0;
       const all = folderMasks[id] || 0;
+      const imgN = folderImages[id] || 0;
       const row = document.createElement("div");
-      row.className = "class-counts-row" + (here === 0 && all === 0 ? " cc-zero" : "");
+      row.className = "class-counts-row" + (here === 0 && all === 0 && imgN === 0 ? " cc-zero" : "");
       const imgCount = state.index >= 0 ? String(here) : "—";
       const folderCount = state.files.length ? String(all) : "—";
-      const imgN = folderImages[id] || 0;
+      const sampleCount = state.files.length ? String(imgN) : "—";
       row.title = state.files.length
-        ? `${here} on this image · ${all} masks in the folder (${imgN} image${imgN === 1 ? "" : "s"})`
+        ? `${here} masks on this image · ${all} masks in folder · ${imgN} image${imgN === 1 ? "" : "s"} with this class`
         : "Open images to count the whole folder";
       row.innerHTML = `
         <span class="cc-name">${escapeHtml(name)}</span>
         <span class="cc-num${here ? " cc-here" : ""}">${imgCount}</span>
         <span class="cc-num">${folderCount}</span>
+        <span class="cc-num">${sampleCount}</span>
       `;
       body.appendChild(row);
     };
@@ -839,6 +975,17 @@
       summary.textContent = "Open images to count masks per class for the folder.";
     } else {
       summary.textContent = `${liveTotal} mask${liveTotal === 1 ? "" : "s"} on this image · ${folderTotal} in folder (${labelled} / ${total} images labelled)`;
+      if (analytics && sampleIds.length) {
+        const sizes = sampleIds.map(id => folderImages[id] || 0);
+        const st = sampleSizeStats(sizes);
+        if (st) {
+          analytics.hidden = false;
+          analytics.innerHTML = `
+            <div class="cca-label">Sample size (images) across classes</div>
+            min ${st.fmt(st.min)} · max ${st.fmt(st.max)} · mean ${st.fmt(st.mean)} · median ${st.fmt(st.median)} · mode ${st.mode} · IQR ${st.fmt(st.iqr)}
+          `;
+        }
+      }
     }
   }
 
@@ -1827,8 +1974,8 @@
     if (text == null && state.fallbackLabelBlobs[f.stem] !== undefined) {
       text = state.fallbackLabelBlobs[f.stem];
     }
-    // An empty .txt is a placeholder for an image nobody has looked at yet,
-    // so it still goes through auto-detect.
+    // Missing or empty .txt means viewed/saved with no masks yet (or legacy
+    // leftover), so it still goes through auto-detect.
     const hasLabels = text != null && text.trim() !== "";
     if (hasLabels) {
       state.polygons = parseYoloSeg(text);
@@ -1845,14 +1992,25 @@
   }
 
   async function autoDetectCurrentImage(gen, stem) {
-    setSegmentStatus("auto-detecting…");
+    if (!state.detectModel) {
+      setSegmentStatus(state.detectFormat === "engine"
+        ? "no .engine Auto-Detect model in models/dot-engine"
+        : "no Auto-Detect model in models/dot-pt");
+      return;
+    }
+    const modelName = detectModelLabel();
+    setSegmentStatus(`auto-detecting with ${modelName}…`);
     const ac = new AbortController();
     state.detectAbort = ac;
     try {
       const res = await fetch(state.segmentServerUrl + "/detect", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: getImageBase64() }),
+        body: JSON.stringify({
+          image: getImageBase64(),
+          format: state.detectFormat,
+          model: state.detectModel,
+        }),
         signal: ac.signal,
       });
       if (isStale(gen, stem)) return;
@@ -1871,8 +2029,8 @@
       ));
       const name = classLabel(classId);
       setSegmentStatus(state.polygons.length
-        ? `${state.polygons.length} outline(s) — class ${name}. Click a class to change.`
-        : "no objects detected — draw manually or use click-to-segment");
+        ? `${state.polygons.length} outline(s) via ${modelName} — class ${name}. Click a class to change.`
+        : `no objects detected with ${modelName} — draw manually or use click-to-segment`);
     } catch (e) {
       if (isAbortError(e) || isStale(gen, stem)) return;
       setSegmentStatus("detect server unreachable — run: python scripts/segment_server.py");
@@ -2131,6 +2289,75 @@
     } catch (_) { /* server not up yet */ }
   }
 
+  // ---------------------------------------------------------------------
+  // Auto-Detect (.pt / .engine: YOLO-seg + FastSAM)
+  // ---------------------------------------------------------------------
+
+  function detectModelsForFormat(fmt) {
+    return state.detectCatalog[fmt] || [];
+  }
+
+  function detectModelLabel() {
+    const fmt = state.detectFormat || "pt";
+    const list = detectModelsForFormat(fmt);
+    const hit = list.find(m => m.id === state.detectModel);
+    if (hit) return `${hit.label} (.${fmt})`;
+    return state.detectModel ? `${state.detectModel} (.${fmt})` : `.${fmt}`;
+  }
+
+  function preferDetectModel(list) {
+    if (!list.length) return "";
+    const seg = list.find(m => m.id === "segmentation");
+    return seg ? seg.id : list[0].id;
+  }
+
+  function fillDetectModelOptions() {
+    const sel = $("detectModelSelect");
+    const list = detectModelsForFormat(state.detectFormat);
+    sel.innerHTML = "";
+    if (!list.length) {
+      const opt = document.createElement("option");
+      opt.value = "";
+      opt.textContent = state.detectFormat === "engine"
+        ? "No .engine files in models/dot-engine"
+        : "No .pt files in models/dot-pt";
+      sel.appendChild(opt);
+      state.detectModel = "";
+      return;
+    }
+    if (!list.some(m => m.id === state.detectModel)) {
+      state.detectModel = preferDetectModel(list);
+    }
+    list.forEach(m => {
+      const opt = document.createElement("option");
+      opt.value = m.id;
+      opt.textContent = m.label;
+      sel.appendChild(opt);
+    });
+    sel.value = state.detectModel;
+  }
+
+  function updateDetectModelSelect() {
+    const off = state.index < 0 || !state.autoDetect;
+    $("detectFormatSelect").disabled = off;
+    $("detectModelSelect").disabled = off || !detectModelsForFormat(state.detectFormat).length;
+    $("detectFormatSelect").value = state.detectFormat;
+    fillDetectModelOptions();
+  }
+
+  async function loadDetectModelCatalog() {
+    try {
+      const res = await fetch(state.segmentServerUrl + "/detect-models");
+      if (!res.ok) return;
+      const data = await res.json();
+      state.detectCatalog = {
+        pt: Array.isArray(data.pt) ? data.pt : [],
+        engine: Array.isArray(data.engine) ? data.engine : [],
+      };
+      updateDetectModelSelect();
+    } catch (_) { /* server not up yet */ }
+  }
+
   function getImageBase64() {
     if (state.imgBase64) return state.imgBase64;
     const off = document.createElement("canvas");
@@ -2239,6 +2466,32 @@
     state.autoDetect = !state.autoDetect;
     $("autoDetectBtn").textContent = `Auto-Detect: ${state.autoDetect ? "ON" : "OFF"}`;
     $("autoDetectBtn").classList.toggle("primary", state.autoDetect);
+    updateDetectModelSelect();
+    setSegmentStatus(state.autoDetect
+      ? (state.detectModel
+        ? `Auto-Detect will use ${detectModelLabel()}`
+        : "no Auto-Detect model selected")
+      : "");
+  });
+
+  $("detectFormatSelect").addEventListener("change", () => {
+    state.detectFormat = $("detectFormatSelect").value === "engine" ? "engine" : "pt";
+    state.detectModel = "";
+    updateDetectModelSelect();
+    if (state.autoDetect) {
+      setSegmentStatus(detectModelsForFormat(state.detectFormat).length
+        ? `Auto-Detect will use ${detectModelLabel()}`
+        : state.detectFormat === "engine"
+          ? "no .engine files yet — export on the Orin into models/dot-engine"
+          : "no .pt Auto-Detect models in models/dot-pt");
+    }
+  });
+
+  $("detectModelSelect").addEventListener("change", () => {
+    state.detectModel = $("detectModelSelect").value || "";
+    if (state.autoDetect && state.detectModel) {
+      setSegmentStatus(`Auto-Detect will use ${detectModelLabel()}`);
+    }
   });
 
   // ---------------------------------------------------------------------
@@ -2412,7 +2665,14 @@
   canvas.addEventListener("wheel", (e) => {
     if (!state.img) return;
     e.preventDefault();
-    panBy(-e.deltaX, -e.deltaY);
+    if (e.shiftKey) {
+      panBy(-e.deltaX, -e.deltaY);
+      return;
+    }
+    const [px, py] = mousePos(e);
+    // Trackpad and mouse wheel: zoom toward cursor
+    const factor = Math.exp(-e.deltaY * 0.0015);
+    zoomBy(factor, px, py);
   }, { passive: false });
 
   function clamp01(v) { return Math.min(1, Math.max(0, v)); }
@@ -2445,6 +2705,15 @@
   // ---------------------------------------------------------------------
 
   window.addEventListener("keydown", (e) => {
+    const helpOverlay = $("helpOverlay");
+    if (helpOverlay && helpOverlay.classList.contains("open")) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closeHelp();
+      }
+      return;
+    }
+
     const tag = (e.target.tagName || "").toLowerCase();
     if (tag === "input" || tag === "select" || tag === "textarea") {
       if (e.key === "Escape") e.target.blur();
@@ -2687,6 +2956,15 @@
   $("prevBtn").addEventListener("click", () => navigate(-1));
   $("nextBtn").addEventListener("click", () => navigate(1));
   $("saveBtn").addEventListener("click", () => saveCurrentLabel());
+
+  function openHelp() { $("helpOverlay").classList.add("open"); }
+  function closeHelp() { $("helpOverlay").classList.remove("open"); }
+  $("helpBtn").addEventListener("click", openHelp);
+  $("helpCloseBtn").addEventListener("click", closeHelp);
+  $("helpOverlay").addEventListener("click", (e) => {
+    if (e.target === $("helpOverlay")) closeHelp();
+  });
+
   $("autoSaveBtn").addEventListener("click", () => {
     state.autoSave = !state.autoSave;
     $("autoSaveBtn").textContent = `Auto-Save: ${state.autoSave ? "ON" : "OFF"}`;
@@ -2728,6 +3006,7 @@
     $("clickSegmentBtn").disabled = state.index < 0;
     $("autoDetectBtn").disabled = state.index < 0;
     updateClickModelSelect();
+    updateDetectModelSelect();
     updateSaveUi();
   }
 
@@ -2885,6 +3164,7 @@
       }
     } catch (e) { /* server not up yet */ }
     await loadClickModelCatalog();
+    await loadDetectModelCatalog();
   }
   init();
   window.addEventListener("qtbridgeready", () => {
