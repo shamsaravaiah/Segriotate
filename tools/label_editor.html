@@ -859,40 +859,35 @@
     return sorted[lo] * (1 - w) + sorted[hi] * w;
   }
 
-  function sampleSizeStats(values) {
-    const nums = values.map(Number).filter(n => Number.isFinite(n));
-    if (!nums.length) return null;
-    const sorted = nums.slice().sort((a, b) => a - b);
-    const n = sorted.length;
-    const sum = sorted.reduce((a, b) => a + b, 0);
-    const mean = sum / n;
-    const median = percentileSorted(sorted, 0.5);
-    const q1 = percentileSorted(sorted, 0.25);
-    const q3 = percentileSorted(sorted, 0.75);
-    const iqr = q3 - q1;
-    const freq = new Map();
-    sorted.forEach(v => freq.set(v, (freq.get(v) || 0) + 1));
-    let best = 0;
-    freq.forEach(c => { if (c > best) best = c; });
-    let modeStr = "—";
-    if (best > 1) {
-      const modes = [...freq.entries()].filter(([, c]) => c === best).map(([v]) => v);
-      modeStr = modes.join(", ");
-    }
+  const MEDIAN_SAMPLE_BAND = 30; // absolute image-count window around the median
+
+  function classSampleAnalytics(sampleIds, folderImages) {
+    const rows = sampleIds.map(id => ({
+      id,
+      name: id < state.classes.length ? state.classes[id] : `id ${id}`,
+      n: folderImages[id] || 0,
+    }));
+    if (!rows.length) return null;
+    const counts = rows.map(r => r.n).slice().sort((a, b) => a - b);
+    const median = percentileSorted(counts, 0.5);
+    const minN = counts[0];
+    const maxN = counts[counts.length - 1];
+    const byCountThenId = (a, b) => a.n - b.n || a.id - b.id;
+    const mins = rows.filter(r => r.n === minN).sort(byCountThenId);
+    const maxs = rows.filter(r => r.n === maxN).sort(byCountThenId);
+    const lo = median - MEDIAN_SAMPLE_BAND;
+    const hi = median + MEDIAN_SAMPLE_BAND;
+    const inBand = rows.filter(r => r.n >= lo && r.n <= hi).sort(byCountThenId);
     const fmt = (x) => {
       if (!Number.isFinite(x)) return "—";
       return Number.isInteger(x) ? String(x) : x.toFixed(1);
     };
-    return {
-      n,
-      min: sorted[0],
-      max: sorted[n - 1],
-      mean,
-      median,
-      mode: modeStr,
-      iqr,
-      fmt,
-    };
+    const list = (entries) => (
+      entries.length
+        ? entries.map(e => `${escapeHtml(e.name)} (${e.n})`).join(", ")
+        : "—"
+    );
+    return { median, minN, maxN, mins, maxs, inBand, lo, hi, fmt, list };
   }
 
   function refreshCountDisplay() {
@@ -976,13 +971,16 @@
     } else {
       summary.textContent = `${liveTotal} mask${liveTotal === 1 ? "" : "s"} on this image · ${folderTotal} in folder (${labelled} / ${total} images labelled)`;
       if (analytics && sampleIds.length) {
-        const sizes = sampleIds.map(id => folderImages[id] || 0);
-        const st = sampleSizeStats(sizes);
+        const st = classSampleAnalytics(sampleIds, folderImages);
         if (st) {
           analytics.hidden = false;
           analytics.innerHTML = `
-            <div class="cca-label">Sample size (images) across classes</div>
-            min ${st.fmt(st.min)} · max ${st.fmt(st.max)} · mean ${st.fmt(st.mean)} · median ${st.fmt(st.median)} · mode ${st.mode} · IQR ${st.fmt(st.iqr)}
+            <div class="cca-label">Sample size (images / class)</div>
+            <div><span class="cca-label" style="display:inline; margin:0;">max</span> ${st.list(st.maxs)}</div>
+            <div><span class="cca-label" style="display:inline; margin:0;">min</span> ${st.list(st.mins)}</div>
+            <div><span class="cca-label" style="display:inline; margin:0;">median</span> ${st.fmt(st.median)}
+              <span style="color:var(--text-faint)"> (±${MEDIAN_SAMPLE_BAND} → ${st.fmt(st.lo)}–${st.fmt(st.hi)})</span></div>
+            <div><span class="cca-label" style="display:inline; margin:0;">in band</span> ${st.list(st.inBand)}</div>
           `;
         }
       }
