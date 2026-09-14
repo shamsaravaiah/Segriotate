@@ -9,7 +9,7 @@ Copies files (never moves) so the editor's folders stay intact. Writes:
     <out>/split.csv
 
 Only images with at least one mask (a non-empty YOLO line) are copied.
-Empty placeholder .txt files created by the editor are skipped.
+Empty .txt files (viewed but not annotated, or legacy leftovers) are skipped.
 
 Stratification assigns unclaimed images per class in id order so each
 class keeps roughly the requested train/val/test ratio.
