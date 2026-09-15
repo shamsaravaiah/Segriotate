@@ -1960,6 +1960,16 @@
     return order;
   }
 
+  function ensurePolygonSelected() {
+    if (!state.polygons.length) {
+      state.selectedPoly = -1;
+      return;
+    }
+    if (state.selectedPoly < 0 || state.selectedPoly >= state.polygons.length) {
+      state.selectedPoly = 0;
+    }
+  }
+
   async function loadCurrentLabel(gen, stem) {
     clearTimeout(autoSaveTimer);
     const f = state.files[state.index];
@@ -2004,6 +2014,7 @@
     }
     if (isStale(gen, stem)) return;
     if (!hasLabels) markDirty();
+    ensurePolygonSelected();
     renderClassList();
   }
 
@@ -2043,6 +2054,7 @@
         [classId],
         o.points.map(([x, y]) => [clamp01(x), clamp01(y)]),
       ));
+      ensurePolygonSelected();
       const name = classLabel(classId);
       setSegmentStatus(state.polygons.length
         ? `${state.polygons.length} outline(s) via ${modelName} — class ${name}. Click a class to change.`
