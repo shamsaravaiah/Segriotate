@@ -183,6 +183,9 @@ class MainWindow(QMainWindow):
         self.profile = QWebEngineProfile("segriotate", QApplication.instance())
         self.profile.setPersistentStoragePath(str(storage))
         self.profile.setCachePath(str(storage / "cache"))
+        # Cap HTTP disk cache so paging thousands of /media images cannot
+        # silently duplicate the whole photo set under App Support.
+        self.profile.setHttpCacheMaximumSize(200 * 1024 * 1024)
         self.profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
         )

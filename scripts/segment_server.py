@@ -799,7 +799,11 @@ def media(filename):
     path = (folder / name).resolve()
     if path.parent != folder.resolve() or not path.is_file():
         abort(404)
-    return send_from_directory(folder, name)
+    resp = send_from_directory(folder, name)
+    # Avoid a second on-disk copy of every viewed image in the WebEngine cache.
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["Pragma"] = "no-cache"
+    return resp
 
 
 @app.route("/project/split-dataset", methods=["POST", "OPTIONS"])

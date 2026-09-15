@@ -3,10 +3,19 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$ROOT"
 LOG="$ROOT/segriotate.log"
+MAX_LOG_BYTES=5000000
 
 if [ ! -x "$ROOT/venv/bin/python" ]; then
   osascript -e 'display alert "Segriotate" message "Python venv not found. In Terminal run:\n\ncd '"$ROOT"'\npython3 -m venv venv\nsource venv/bin/activate\npip install -r requirements.txt" as critical'
   exit 1
+fi
+
+# Rotate the append-only launch log before it grows without bound.
+if [ -f "$LOG" ]; then
+  size=$(wc -c <"$LOG" | tr -d ' ')
+  if [ "$size" -gt "$MAX_LOG_BYTES" ]; then
+    mv -f "$LOG" "${LOG}.1"
+  fi
 fi
 
 exec "$ROOT/venv/bin/python" "$ROOT/desktop_app.py" >>"$LOG" 2>&1
