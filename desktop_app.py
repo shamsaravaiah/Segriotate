@@ -124,6 +124,31 @@ def web_storage_dir() -> Path:
     return path
 
 
+def _purge_legacy_http_caches() -> list[str]:
+    """Delete old WebEngine HTTP caches that duplicated every viewed image."""
+    import shutil
+
+    home = Path.home()
+    candidates = [
+        home / "Library/Application Support/Segriotate/web/cache",
+        home / "Library/Application Support/Segri-Labs/web/cache",
+        home / "AppData/Roaming/Segriotate/web/cache",
+        home / "AppData/Local/Segriotate/web/cache",
+        home / "AppData/Roaming/Segri-Labs/web/cache",
+        home / "AppData/Local/Segri-Labs/web/cache",
+    ]
+    removed: list[str] = []
+    for path in candidates:
+        if not path.is_dir():
+            continue
+        try:
+            shutil.rmtree(path)
+            removed.append(str(path))
+        except OSError:
+            pass
+    return removed
+
+
 def probe_health() -> dict | None:
     try:
         with urllib.request.urlopen(f"{BASE}/health", timeout=2) as resp:
@@ -180,12 +205,15 @@ class MainWindow(QMainWindow):
         # profile with a storage path keeps it on disk. The profile is parented
         # to the application so that it outlives the page it backs.
         storage = web_storage_dir()
+        _purge_legacy_http_caches()
         self.profile = QWebEngineProfile("segriotate", QApplication.instance())
         self.profile.setPersistentStoragePath(str(storage))
         self.profile.setCachePath(str(storage / "cache"))
-        # Cap HTTP disk cache so paging thousands of /media images cannot
-        # silently duplicate the whole photo set under App Support.
-        self.profile.setHttpCacheMaximumSize(200 * 1024 * 1024)
+        # Do not disk-cache /media images at all. Cache-Control: no-store on the
+        # server is the primary guard; NoCache is defense in depth across Qt builds.
+        self.profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
+        self.profile.setHttpCacheMaximumSize(0)
+        self.profile.clearHttpCache()
         self.profile.setPersistentCookiesPolicy(
             QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies
         )
