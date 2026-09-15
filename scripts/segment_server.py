@@ -2,7 +2,7 @@
 Local inference + UI server for Segriotate.
 
 1. /          -- the label editor (HTML)
-2. /detect    -- Auto-Detect full-image seg (chosen YOLO-seg or FastSAM weight)
+2. /detect    -- Auto-Detect full-image seg (YOLO-seg, FastSAM, or MobileSAM grid)
 3. /segment   -- click-to-segment fallback (.pt or .engine: FastSAM, MobileSAM, …)
 4. /label     -- read/write YOLO .txt files in labels/
 5. /project/label-stats -- mask/image counts per class in the labels folder
@@ -387,8 +387,14 @@ def get_click_model(fmt: str, stem: str):
         return cache_key, _click_models[cache_key], spec
 
 
+DETECT_KINDS = {"yolo", "fastsam", "sam"}
+SAM_GRID_N = 8
+SAM_MIN_AREA = 0.0005
+SAM_DEDUPE_IOU = 0.5
+
+
 def list_detect_models(fmt: str) -> list[dict]:
-    """YOLO-seg and FastSAM weights suitable for full-image Auto-Detect."""
+    """YOLO-seg, FastSAM, and SAM/MobileSAM weights for full-image Auto-Detect."""
     folder = click_format_dir(fmt)
     suffix = f".{fmt}"
     items = []
@@ -398,7 +404,7 @@ def list_detect_models(fmt: str) -> list[dict]:
         if not p.is_file() or p.suffix.lower() != suffix:
             continue
         kind = click_kind(p.stem)
-        if kind not in {"yolo", "fastsam"}:
+        if kind not in DETECT_KINDS:
             continue
         items.append({
             "id": p.stem,
@@ -418,8 +424,8 @@ def get_detect_model(fmt: str, stem: str):
     if not stem or stem in {".", ".."}:
         raise ValueError("unknown detect model")
     kind = click_kind(stem)
-    if kind not in {"yolo", "fastsam"}:
-        raise ValueError(f"{stem} is not a full-image Auto-Detect model (use Click-to-Segment)")
+    if kind not in DETECT_KINDS:
+        raise ValueError(f"{stem} is not a full-image Auto-Detect model")
     path = (click_format_dir(fmt) / f"{stem}.{fmt}").resolve()
     folder = click_format_dir(fmt).resolve()
     if path.parent != folder:
@@ -431,11 +437,13 @@ def get_detect_model(fmt: str, stem: str):
     with _detect_lock:
         if cache_key not in _detect_models:
             print(f"Loading {path} for Auto-Detect...")
-            from ultralytics import FastSAM, YOLO
+            from ultralytics import FastSAM, SAM, YOLO
 
             path_str = str(path)
             if kind == "fastsam":
                 _detect_models[cache_key] = FastSAM(path_str)
+            elif kind == "sam":
+                _detect_models[cache_key] = SAM(path_str)
             else:
                 model = YOLO(path_str)
                 task = getattr(model, "task", None)
@@ -470,11 +478,113 @@ def results_to_objects(results) -> list[dict]:
     return objects
 
 
+def _poly_area(pts: list) -> float:
+    """Shoelace area in normalized image coords (0–1)."""
+    if len(pts) < 3:
+        return 0.0
+    area = 0.0
+    n = len(pts)
+    for i in range(n):
+        x1, y1 = pts[i]
+        x2, y2 = pts[(i + 1) % n]
+        area += float(x1) * float(y2) - float(x2) * float(y1)
+    return abs(area) * 0.5
+
+
+def _poly_bbox(pts: list) -> tuple[float, float, float, float]:
+    xs = [float(p[0]) for p in pts]
+    ys = [float(p[1]) for p in pts]
+    return min(xs), min(ys), max(xs), max(ys)
+
+
+def _bbox_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
+    ax0, ay0, ax1, ay1 = a
+    bx0, by0, bx1, by1 = b
+    ix0, iy0 = max(ax0, bx0), max(ay0, by0)
+    ix1, iy1 = min(ax1, bx1), min(ay1, by1)
+    iw, ih = max(0.0, ix1 - ix0), max(0.0, iy1 - iy0)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
+    area_b = max(0.0, bx1 - bx0) * max(0.0, by1 - by0)
+    union = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _filter_tiny_polygons(objects: list[dict], min_area: float = SAM_MIN_AREA) -> list[dict]:
+    return [o for o in objects if _poly_area(o.get("points") or []) >= min_area]
+
+
+def _dedupe_polygon_objects(objects: list[dict], iou_thresh: float = SAM_DEDUPE_IOU) -> list[dict]:
+    """Keep larger polygons when bounding-box IoU exceeds the threshold."""
+    ranked = sorted(
+        objects,
+        key=lambda o: _poly_area(o.get("points") or []),
+        reverse=True,
+    )
+    kept: list[dict] = []
+    kept_boxes: list[tuple[float, float, float, float]] = []
+    for obj in ranked:
+        pts = obj.get("points") or []
+        if len(pts) < 3:
+            continue
+        box = _poly_bbox(pts)
+        if any(_bbox_iou(box, kb) > iou_thresh for kb in kept_boxes):
+            continue
+        kept.append(obj)
+        kept_boxes.append(box)
+    return kept
+
+
 def run_detect_predict(kind: str, model, img, conf: float):
     """Full-image inference for Auto-Detect (no click prompt)."""
     if kind == "fastsam":
         return model(img, conf=conf, verbose=False)
     return model.predict(img, conf=conf, verbose=False)
+
+
+def _sam_grid_points(w: float, h: float, n: int = SAM_GRID_N) -> list[tuple[float, float]]:
+    """Inset n×n grid of pixel coordinates across the image."""
+    points = []
+    for j in range(n):
+        for i in range(n):
+            px = w * (i + 0.5) / n
+            py = h * (j + 0.5) / n
+            points.append((px, py))
+    return points
+
+
+def run_sam_grid_detect(model, img, conf: float) -> list[dict]:
+    """Full-image Auto-Detect for MobileSAM/SAM via an 8×8 positive-point grid."""
+    import numpy as np
+
+    source = np.asarray(img)
+    h, w = int(source.shape[0]), int(source.shape[1])
+    grid = _sam_grid_points(float(w), float(h))
+
+    objects: list[dict] = []
+    # Try one batched call with independent single-point prompts.
+    try:
+        pts = [[[float(x), float(y)]] for x, y in grid]
+        labs = [[1] for _ in grid]
+        results = model.predict(source, points=pts, labels=labs, verbose=False)
+        objects = results_to_objects(results)
+    except Exception:
+        objects = []
+
+    # MobileSAM often treats multi-point prompts as one object — fall back to
+    # one click per grid cell so each fruit can become its own mask.
+    if len(objects) < 2:
+        objects = []
+        for px, py in grid:
+            try:
+                results = run_click_predict("sam", model, img, px, py, conf)
+            except Exception:
+                continue
+            objects.extend(results_to_objects(results))
+
+    return _dedupe_polygon_objects(_filter_tiny_polygons(objects))
 
 
 def _has_mask(results) -> bool:
@@ -565,7 +675,7 @@ def click_models():
 
 @app.route("/detect-models")
 def detect_models():
-    """List full-image Auto-Detect weights (YOLO-seg + FastSAM)."""
+    """List full-image Auto-Detect weights (YOLO-seg + FastSAM + MobileSAM/SAM)."""
     return jsonify({
         "formats": list(CLICK_FORMATS),
         "pt": list_detect_models("pt"),
@@ -784,12 +894,16 @@ def detect():
         return jsonify({"error": str(e)}), 400
 
     try:
-        results = run_detect_predict(spec["kind"], model, img, conf)
+        if spec["kind"] == "sam":
+            objects = run_sam_grid_detect(model, img, conf)
+        else:
+            results = run_detect_predict(spec["kind"], model, img, conf)
+            objects = results_to_objects(results)
     except Exception as e:
         return jsonify({"error": f"inference failed: {e}"}), 500
 
     return jsonify({
-        "objects": results_to_objects(results),
+        "objects": objects,
         "model": key,
         "label": spec["label"],
     })
