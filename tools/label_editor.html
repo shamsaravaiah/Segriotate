@@ -150,6 +150,24 @@
     padding: 0 4px; font-size: 14px; line-height: 1; flex: 0;
   }
   .class-chip .chip-x:hover { color: var(--danger); }
+  .poly-class-list { display: flex; flex-direction: column; gap: 2px; margin: 0 0 10px 0; }
+  .poly-class-group {
+    font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em;
+    color: var(--text-faint); font-weight: 700; margin: 8px 0 2px 2px;
+  }
+  .poly-class-group:first-child { margin-top: 0; }
+  .poly-class-btn {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: transparent; border: 1px solid transparent; border-radius: 5px;
+    padding: 6px 8px; color: var(--text-dim); cursor: pointer; text-align: left;
+    font-family: var(--sans); font-size: 12.5px;
+  }
+  .poly-class-btn:hover { background: var(--panel-2); color: var(--text); }
+  .poly-class-btn.on-mask {
+    background: var(--accent-dim); border-color: var(--accent);
+    box-shadow: inset 2px 0 0 var(--accent); color: var(--text);
+  }
+  .poly-class-btn .class-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .class-create {
     margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border);
   }
@@ -3065,27 +3083,20 @@
       const p = state.polygons[state.selectedPoly];
       const assigned = getClassIds(p);
       const groups = uniqueGroups();
-      const replaceOptions = groups.map(group => {
+      const classPickList = groups.map(group => {
         const ids = [];
         state.classes.forEach((_, id) => {
           if ((state.classGroup[id] || "Custom") === group) ids.push(id);
         });
         if (!ids.length) return "";
-        const opts = ids.map(id =>
-          `<option value="${id}" ${assigned.length === 1 && assigned[0] === id ? "selected" : ""}>${escapeHtml(state.classes[id])}</option>`
-        ).join("");
-        return `<optgroup label="${escapeHtml(group)}">${opts}</optgroup>`;
-      }).join("");
-      const addOptions = groups.map(group => {
-        const ids = [];
-        state.classes.forEach((_, id) => {
-          if ((state.classGroup[id] || "Custom") === group && !assigned.includes(id)) ids.push(id);
-        });
-        if (!ids.length) return "";
-        const opts = ids.map(id =>
-          `<option value="${id}">${escapeHtml(state.classes[id])}</option>`
-        ).join("");
-        return `<optgroup label="${escapeHtml(group)}">${opts}</optgroup>`;
+        const buttons = ids.map(id => `
+          <button type="button" class="poly-class-btn${assigned.includes(id) ? " on-mask" : ""}" data-poly-class="${id}"
+            title="${assigned.includes(id) ? "On this mask — click to keep only this class" : "Click to replace · Shift-click to add"}">
+            <span class="class-swatch" style="background:${classColor(id)}"></span>
+            <span class="class-name">${escapeHtml(state.classes[id])}</span>
+          </button>
+        `).join("");
+        return `<div class="poly-class-group">${escapeHtml(group)}</div>${buttons}`;
       }).join("");
       const chips = assigned.map(id => `
         <span class="class-chip">
@@ -3099,26 +3110,22 @@
           <div class="hint">Assigned classes</div>
         </div>
         <div class="class-chip-list">${chips || "<span style='color:var(--text-faint)'>none</span>"}</div>
-        <div class="hint" style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); font-weight:700; margin:0 0 6px 0;">Replace with</div>
-        <select id="polyClassSelect">${replaceOptions || "<option value=''>no classes yet</option>"}</select>
-        <div class="hint" style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); font-weight:700; margin:10px 0 6px 0;">Add another class</div>
-        <select id="polyClassAddSelect">
-          <option value="">choose a class to add…</option>
-          ${addOptions}
-        </select>
+        <div class="hint" style="font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-faint); font-weight:700; margin:0 0 6px 0;">Change class</div>
+        <div class="poly-class-list">${classPickList || "<div class='class-empty' style='padding:4px 0'>no classes yet</div>"}</div>
+        <div style="font-size:11px; color:var(--text-faint); margin:0 0 10px 0; line-height:1.4;">Click to replace · Shift-click to add</div>
         vertices: ${p.points.length}<br><br>
         <button type="button" id="deletePolyBtn" class="danger" style="width:100%;">Delete this polygon</button>
         <div style="color:var(--text-faint); margin-top:8px; line-height:1.45;">
           Each row above is a separate mask. Chip × or Delete this polygon removes it.
         </div>
       `;
-      $("polyClassSelect").addEventListener("change", (e) => {
-        const id = parseInt(e.target.value, 10);
-        if (Number.isFinite(id)) setActiveClass(id);
-      });
-      $("polyClassAddSelect").addEventListener("change", (e) => {
-        const id = parseInt(e.target.value, 10);
-        if (Number.isFinite(id)) addClassToSelected(id);
+      selectedInfoEl.querySelectorAll("[data-poly-class]").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          const id = parseInt(btn.getAttribute("data-poly-class"), 10);
+          if (!Number.isFinite(id)) return;
+          if (e.shiftKey) addClassToSelected(id);
+          else setActiveClass(id);
+        });
       });
       selectedInfoEl.querySelectorAll("[data-remove-class]").forEach(btn => {
         btn.addEventListener("click", (e) => {
